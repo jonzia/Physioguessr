@@ -1,3 +1,3 @@
-# Neuroguessr
+# Physioguessr
 
-Web applet for Neuroguessr game.
+Web applet for Physioguessr game.
