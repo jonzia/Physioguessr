@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PhysioGuessr</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Lobby Screen -->
+    <div id="lobby-screen" class="lobby-screen">
+        <div class="lobby-container">
+            <h1>PhysioGuessr</h1>
+            
+            <!-- Player Name Input -->
+            <div class="player-name-section">
+                <label for="player-name-input">Your Name:</label>
+                <input type="text" id="player-name-input" placeholder="Enter your name" maxlength="20" value="">
+            </div>
+            
+            <div class="lobby-menu">
+                <button id="create-room-btn" class="lobby-btn">Create Multiplayer Room</button>
+                <button id="join-room-btn" class="lobby-btn">Join Multiplayer Room</button>
+                <button id="single-player-btn" class="lobby-btn single-player-btn">Single Player</button>
+                <button id="debug-coords-btn" class="lobby-btn debug-btn">Question Creator</button>
+            </div>
+            
+            <!-- Create Room Panel -->
+            <div id="create-room-panel" class="lobby-panel hidden">
+                <h2>Create Room</h2>
+                <div class="room-settings">
+                    <label>Round Timer (seconds):</label>
+                    <input type="number" id="timer-setting" value="30" min="15" max="120">
+                </div>
+                <div class="room-code-display">
+                    <p>Room Code:</p>
+                    <h2 id="room-code-display"></h2>
+                </div>
+                <button id="start-game-btn" class="lobby-btn" disabled>Start Game</button>
+                <div id="players-waiting">
+                    <h3>Players in Lobby:</h3>
+                    <ul id="players-list"></ul>
+                </div>
+            </div>
+            
+            <!-- Join Room Panel -->
+            <div id="join-room-panel" class="lobby-panel hidden">
+                <h2>Join Room</h2>
+                <input type="text" id="room-code-input" placeholder="Enter room code" maxlength="6">
+                <button id="join-room-submit-btn" class="lobby-btn">Join</button>
+                <p id="join-error" class="error-message hidden">Room not found</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="game-container hidden">
+        <div class="game-header">
+            <h1>PhysioGuessr</h1>
+            <div class="player-name-display">
+                <span class="player-label">Player:</span>
+                <span id="player-name-display"></span>
+            </div>
+        </div>
+        
+        <div class="game-info">
+            <div class="round-indicator">Round: <span id="current-round">1</span> / 5</div>
+            <div class="timer-display hidden" id="timer-display">
+                Time: <span id="timer-value">30</span>s
+            </div>
+            <div class="score">Score: <span id="score">0</span></div>
+        </div>
+        
+        <div class="game-content">
+            <!-- Left Column -->
+            <div class="left-column">
+                <div class="symptoms-box">
+                    <h3>Symptoms:</h3>
+                    <p id="symptoms">Loading...</p>
+                </div>
+                
+                <div class="controls">
+                    <p>Slice: <span id="slice-number">1</span> / <span id="total-slices">26</span></p>
+                    <button id="submit-guess">Submit Guess</button>
+                    <button id="end-game-btn" class="end-game-btn">End Game</button>
+                </div>
+            </div>
+            
+            <!-- Right Column -->
+            <div class="right-column">
+                <div class="brain-viewer">
+                    <img id="brain-slice" src="images/slice_013.png" alt="Brain MRI">
+                    <input type="range" id="slice-slider" min="1" max="26" value="13" orient="vertical" class="slice-slider">
+                    <div class="scroll-hint">Scroll to navigate through brain slices</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Results Modal -->
+    <div id="results-overlay" class="overlay hidden"></div>
+    <div id="results-modal" class="results-modal hidden">
+        <h2>Round <span id="results-round">1</span> Results</h2>
+        
+        <div class="results-content">
+            <!-- Left Column - Info -->
+            <div class="results-left">
+                <div class="result-score">
+                    <span class="score-label">Score</span>
+                    <span id="result-score-value" class="score-value">0</span>
+                    <span class="score-label">points</span>
+                </div>
+                
+                <div class="result-distance">
+                    Distance: <span id="result-distance-value">0.000</span>
+                </div>
+                
+                <div class="result-description">
+                    <strong>Correct Location:</strong>
+                    <p id="result-description"></p>
+                </div>
+                
+                <div class="result-legend">
+                    <div class="legend-item">
+                        <div class="legend-marker correct-marker"></div>
+                        <span>Correct</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-marker player-marker"></div>
+                        <span>Your guess</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-marker opponent-marker"></div>
+                        <span>Opponents</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Middle Column - Image -->
+            <div class="results-middle">
+                <div class="results-image-container">
+                    <img id="results-slice" src="" alt="Result slice">
+                    <div id="correct-marker" class="result-marker correct-marker"></div>
+                    <div id="player-marker" class="result-marker player-marker"></div>
+                    <div id="other-players-markers"></div>
+                </div>
+            </div>
+            
+            <!-- Right Column - Leaderboard -->
+            <div class="results-right" id="results-leaderboard">
+                <h3>Leaderboard</h3>
+                <div id="leaderboard-list"></div>
+            </div>
+        </div>
+        
+        <div class="results-footer">
+            <button id="continue-btn">Continue</button>
+            <button id="end-game-results-btn" class="end-game-btn hidden">End Game</button>
+            <p id="waiting-message" class="waiting-message hidden">
+                Waiting for other players... (<span id="waiting-timer">15</span>s)
+            </p>
+        </div>
+    </div>
+    
+    <!-- Game Over Modal -->
+    <div id="game-over-overlay" class="overlay hidden"></div>
+    <div id="game-over" class="game-over hidden">
+        <h2>Game Over!</h2>
+        <p class="final-score">Final Score: <span id="final-score">0</span></p>
+        <button id="new-game">Start New Game</button>
+    </div>
+
+    <!-- Debug Coordinate Picker Modal -->
+    <div id="debug-overlay" class="overlay hidden"></div>
+    <div id="debug-modal" class="debug-modal hidden">
+        <h2>Question Coordinate Picker</h2>
+        
+        <div class="debug-content">
+            <div class="debug-viewer">
+                <img id="debug-slice" src="images/slice_013.png" alt="Brain slice">
+                <div id="debug-marker" class="debug-marker"></div>
+            </div>
+            
+            <div class="debug-controls">
+                <div class="debug-slider-container">
+                    <label>Slice: <span id="debug-slice-num">13</span> / 26</label>
+                    <input type="range" id="debug-slider" min="1" max="26" value="13" class="debug-slider">
+                </div>
+                
+                <div class="debug-output">
+                    <h3>Coordinates:</h3>
+                    <div class="coord-line">
+                        <span class="coord-label">x:</span>
+                        <input type="text" id="debug-x" readonly>
+                    </div>
+                    <div class="coord-line">
+                        <span class="coord-label">y:</span>
+                        <input type="text" id="debug-y" readonly>
+                    </div>
+                    <div class="coord-line">
+                        <span class="coord-label">slice:</span>
+                        <input type="text" id="debug-slice-val" readonly>
+                    </div>
+                    <button id="copy-coords-btn" class="lobby-btn">Copy Coordinates</button>
+                    <p class="copy-hint hidden" id="copy-hint">✓ Copied!</p>
+                </div>
+            </div>
+        </div>
+        
+        <button id="close-debug-btn" class="lobby-btn">Close</button>
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+
+    <!-- Firebase Config -->
+    <script src="firebase-config.js"></script>
+    
+    <script src="game.js"></script>
+
+    
+</body>
+</html>
