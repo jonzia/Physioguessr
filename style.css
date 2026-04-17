@@ -139,6 +139,17 @@ button {
     transition: background 0.3s;
 }
 
+.button-row {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+}
+
+.button-row button {
+    flex: 1;
+    max-width: 200px;
+}
+
 button:hover {
     background: #45a049;
 }
@@ -1007,4 +1018,192 @@ button:hover {
 
 #close-debug-btn {
     width: 100%;
+}
+
+.single-player-btn {
+    background: #4CAF50;  /* CHANGED to green */
+}
+
+.single-player-btn:hover {
+    background: #45a049;  /* CHANGED to darker green */
+}
+
+/* Player Auth Section */
+.player-auth-section {
+    margin-bottom: 20px;
+}
+
+.auth-prompt {
+    text-align: center;
+    color: #aaa;
+    font-size: 14px;
+    margin-bottom: 15px;
+}
+
+.auth-btn {
+    width: 100%;
+    padding: 12px;
+    margin-bottom: 10px;
+    font-size: 16px;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    transition: all 0.3s;
+}
+
+.google-btn {
+    background: #fff;
+    color: #333;
+}
+
+.google-btn:hover {
+    background: #f0f0f0;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+
+.google-icon {
+    font-weight: bold;
+    font-size: 18px;
+    color: #4285f4;
+}
+
+.anonymous-btn {
+    background: #666;
+    color: #fff;
+}
+
+.anonymous-btn:hover {
+    background: #555;
+}
+
+.user-profile {
+    display: flex;
+    align-items: center;  /* CHANGED from flex-start */
+    gap: 15px;
+    background: #1a1a1a;
+    padding: 15px;
+    border-radius: 10px;
+}
+
+.user-photo {
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    border: 2px solid #4CAF50;
+}
+
+.user-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;  /* INCREASED from 5px for better spacing */
+    align-items: flex-start;  /* ADD THIS - aligns items to the left */
+}
+
+.user-name {
+    color: #4CAF50;
+    font-weight: bold;
+    font-size: 16px;
+}
+
+.signout-btn {
+    align-self: flex-start;
+    padding: 5px 15px;
+    background: #f44336;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.signout-btn:hover {
+    background: #d32f2f;
+}
+
+.display-name-section {
+    margin-top: 15px;
+}
+
+.display-name-section label {
+    display: block;
+    margin-bottom: 8px;
+    color: #aaa;
+    font-size: 14px;
+}
+
+#display-name-input {
+    width: 100%;
+    padding: 12px;
+    font-size: 16px;
+    border-radius: 5px;
+    border: 2px solid #555;
+    background: #1a1a1a;
+    color: #fff;
+    transition: border-color 0.3s;
+}
+
+#display-name-input:focus {
+    outline: none;
+    border-color: #4CAF50;
+}
+
+#display-name-input::placeholder {
+    color: #666;
+}
+
+.find-match-btn {
+    background: #FF9800;
+    font-size: 18px;
+}
+
+.find-match-btn:hover {
+    background: #F57C00;
+}
+
+.matchmaking-panel {
+    text-align: center;
+}
+
+.matchmaking-spinner {
+    margin: 30px 0;
+}
+
+.spinner {
+    width: 60px;
+    height: 60px;
+    margin: 0 auto;
+    border: 6px solid #555;
+    border-top: 6px solid #FF9800;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.matchmaking-status {
+    color: #aaa;
+    font-size: 16px;
+    margin-bottom: 10px;
+}
+
+.queue-info {
+    color: #FF9800;
+    font-size: 14px;
+    margin-bottom: 20px;
+}
+
+.cancel-btn {
+    background: #f44336;
+}
+
+.cancel-btn:hover {
+    background: #d32f2f;
 }

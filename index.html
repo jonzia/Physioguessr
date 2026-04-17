@@ -10,15 +10,39 @@
         <div class="lobby-container">
             <h1>PhysioGuessr</h1>
             
-            <!-- Player Name Input -->
-            <div class="player-name-section">
-                <label for="player-name-input">Your Name:</label>
-                <input type="text" id="player-name-input" placeholder="Enter your name" maxlength="20" value="">
+            <!-- Player Auth Section -->
+            <div class="player-auth-section">
+                <!-- Signed Out State -->
+                <div id="signed-out-state">
+                    <p class="auth-prompt">Sign in to save your progress and create custom decks</p>
+                    <button id="google-signin-btn" class="auth-btn google-btn">
+                        <span class="google-icon">G</span> Sign in with Google
+                    </button>
+                    <button id="play-anonymous-btn" class="auth-btn anonymous-btn">Play as Guest</button>
+                </div>
+                
+                <!-- Signed In State -->
+                <div id="signed-in-state" class="hidden">
+                    <div class="user-profile">
+                        <img id="user-photo" class="user-photo" src="" alt="Profile">
+                        <div class="user-info">
+                            <span id="user-name" class="user-name"></span>
+                            <button id="signout-btn" class="signout-btn">Sign Out</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Display Name Input (always visible when signed in) -->
+                <div id="display-name-section" class="display-name-section hidden">
+                    <label for="display-name-input">Display Name (shown to other players):</label>
+                    <input type="text" id="display-name-input" placeholder="Enter display name" maxlength="20" value="">
+                </div>
             </div>
             
             <div class="lobby-menu">
-                <button id="create-room-btn" class="lobby-btn">Create Multiplayer Room</button>
-                <button id="join-room-btn" class="lobby-btn">Join Multiplayer Room</button>
+                <button id="find-match-btn" class="lobby-btn find-match-btn">🎮 Find Match</button>
+                <button id="create-room-btn" class="lobby-btn">Create Private Room</button>
+                <button id="join-room-btn" class="lobby-btn">Join Private Room</button>
                 <button id="single-player-btn" class="lobby-btn single-player-btn">Single Player</button>
                 <button id="debug-coords-btn" class="lobby-btn debug-btn">Question Creator</button>
             </div>
@@ -47,6 +71,17 @@
                 <input type="text" id="room-code-input" placeholder="Enter room code" maxlength="6">
                 <button id="join-room-submit-btn" class="lobby-btn">Join</button>
                 <p id="join-error" class="error-message hidden">Room not found</p>
+            </div>
+
+            <!-- Matchmaking Panel -->
+            <div id="matchmaking-panel" class="lobby-panel hidden">
+                <h2>Finding Match...</h2>
+                <div class="matchmaking-spinner">
+                    <div class="spinner"></div>
+                </div>
+                <p class="matchmaking-status">Looking for opponents...</p>
+                <p class="queue-info">Players in queue: <span id="queue-count">1</span></p>
+                <button id="cancel-matchmaking-btn" class="lobby-btn cancel-btn">Cancel</button>
             </div>
         </div>
     </div>
@@ -78,8 +113,10 @@
                 
                 <div class="controls">
                     <p>Slice: <span id="slice-number">1</span> / <span id="total-slices">26</span></p>
-                    <button id="submit-guess">Submit Guess</button>
-                    <button id="end-game-btn" class="end-game-btn">End Game</button>
+                    <div class="button-row">
+                        <button id="submit-guess">Submit Guess</button>
+                        <button id="end-game-btn" class="end-game-btn">End Game</button>
+                    </div>
                 </div>
             </div>
             
@@ -210,6 +247,7 @@
     <!-- Firebase SDKs -->
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>  <!-- ADD THIS -->
 
     <!-- Firebase Config -->
     <script src="firebase-config.js"></script>

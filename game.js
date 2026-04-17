@@ -47,6 +47,7 @@ let waitingCountdown = null;
 let autoAdvanceCountdown = null;
 let lastSeenRound = 0; // Track last round we processed
 let hasGameStarted = false;
+let lastPlayerCount = 0;
 
 // Track player presence in Firebase
 function setupPresenceTracking() {
@@ -148,13 +149,16 @@ function showNotification(message) {
     }, 3000);
 }
 
-// Get player name from input or generate random one
+// Get player name from input or generate from user
 function getPlayerName() {
-    const inputName = playerNameInput.value.trim();
+    const inputName = displayNameInput.value.trim();
     if (inputName.length > 0) {
         return inputName;
     }
-    // Fallback to random name if empty
+    // Fallback to Google name or random
+    if (currentUser) {
+        return currentUser.displayName || `Player-${currentUser.uid.substr(0, 6)}`;
+    }
     return 'Player-' + Math.random().toString(36).substr(2, 4).toUpperCase();
 }
 
@@ -163,9 +167,14 @@ function generateRoomCode() {
     return Math.random().toString(36).substr(2, 6).toUpperCase();
 }
 
-// Single Player Mode
 singlePlayerBtn.addEventListener('click', () => {
-    // Get player name
+    // Check if signed in
+    if (!currentUser) {
+        alert('Please sign in or play as guest first');
+        return;
+    }
+    
+    // Get player name from display name input
     playerName = getPlayerName();
     
     // Set single-player mode (no room)
@@ -180,8 +189,9 @@ singlePlayerBtn.addEventListener('click', () => {
     // Display player name
     playerNameDisplay.textContent = playerName;
     
-    // Hide end game button in single player
-    endGameBtn.style.display = 'none';
+    // Show end game button for single player (to return to menu)
+    endGameBtn.style.display = 'block';  // CHANGED from 'none'
+    endGameBtn.textContent = 'End Game';  // ADD THIS
     
     // Reset game state
     currentRound = 1;
@@ -198,14 +208,20 @@ singlePlayerBtn.addEventListener('click', () => {
 
 // Create Room
 createRoomBtn.addEventListener('click', async () => {
+    // Check if signed in
+    if (!currentUser) {
+        alert('Please sign in or play as guest first');
+        return;
+    }
+    
     // Rate limit check
     if (!checkRateLimit('createRoom', 3, 60000)) {
         alert('Too many rooms created. Please wait a minute.');
         return;
     }
-
-    // Get player name
-    playerName = getPlayerName();
+    
+    // Get player name from auth
+    playerName = currentUser.displayName || `Player-${currentUser.uid.substr(0, 6)}`;
     
     lobbyMenu.classList.add('hidden');
     createRoomPanel.classList.remove('hidden');
@@ -254,6 +270,11 @@ joinRoomBtn.addEventListener('click', () => {
 });
 
 joinRoomSubmitBtn.addEventListener('click', async () => {
+    // Check if signed in
+    if (!currentUser) {
+        alert('Please sign in or play as guest first');
+        return;
+    }
     // Rate limit check
     if (!checkRateLimit('joinRoom', 10, 60000)) {
         alert('Too many join attempts. Please wait a minute.');
@@ -532,6 +553,39 @@ function listenForRoundChanges() {
     });
 }
 
+// Monitor player count during multiplayer games
+function monitorPlayerCount() {
+    if (!currentRoomCode || !playersRef) return;
+    
+    const playerCountListener = playersRef.onSnapshot((snapshot) => {
+        const playerCount = snapshot.size;
+        
+        // Initialize on first call
+        if (lastPlayerCount === 0) {
+            lastPlayerCount = playerCount;
+            console.log('Starting with', playerCount, 'players');
+            return;
+        }
+        
+        // Check if someone left
+        if (playerCount < lastPlayerCount) {
+            const playersLost = lastPlayerCount - playerCount;
+            showNotification(`${playersLost} player(s) disconnected (${playerCount} remaining)`);
+            lastPlayerCount = playerCount;
+        }
+        
+        console.log('Active players:', playerCount);
+        
+        // If down to 1 player, end game
+        if (playerCount < 2) {
+            alert('Not enough players remaining. Returning to lobby.');
+            location.reload();
+        }
+    });
+    
+    return playerCountListener;
+}
+
 // Start multiplayer game for all players
 async function startMultiplayerGame(roomData) {
     console.log('startMultiplayerGame called');
@@ -581,6 +635,9 @@ async function startMultiplayerGame(roomData) {
     
     // Listen for round changes (forced sync)
     listenForRoundChanges();
+
+    // Monitor for player disconnections
+    monitorPlayerCount();
 }
 
 // ============================================
@@ -1295,31 +1352,33 @@ submitBtn.addEventListener('click', async () => {
 
 // End game / Exit game button
 endGameBtn.addEventListener('click', async () => {
-    if (isRoomCreator) {
-        // Host: End game for everyone
-        if (!confirm('Are you sure you want to end the game for all players?')) {
-            return;
-        }
-        
-        if (currentRoomCode) {
+    if (currentRoomCode) {
+        // Multiplayer mode
+        if (isRoomCreator) {
+            // Host: End game for everyone
+            if (!confirm('Are you sure you want to end the game for all players?')) {
+                return;
+            }
             await roomRef.update({ status: 'finished' });
         } else {
-            // Single player
-            showGameOver();
+            // Non-host: Exit to lobby
+            if (!confirm('Are you sure you want to exit? The game will continue for other players.')) {
+                return;
+            }
+            
+            // Remove self from players
+            if (playersRef && playerName) {
+                await playersRef.doc(playerName).delete();
+            }
+            
+            // Reload to lobby
+            location.reload();
         }
     } else {
-        // Non-host: Exit to lobby
-        if (!confirm('Are you sure you want to exit? The game will continue for other players.')) {
-            return;
+        // Single player mode: just return to lobby
+        if (confirm('Are you sure you want to end the game?')) {
+            location.reload();
         }
-        
-        // Remove self from players
-        if (playersRef && playerName) {
-            await playersRef.doc(playerName).delete();
-        }
-        
-        // Reload to lobby
-        location.reload();
     }
 });
 
@@ -1394,6 +1453,39 @@ async function cleanupOldRooms() {
             await Promise.all(deletePromises);
             await roomRef.delete();
             console.log(`Deleted abandoned room: ${doc.id}`);
+        }
+
+        // Clean up old matchmaking entries (older than 2 minutes OR matched status)
+        const nowForQueue = firebase.firestore.Timestamp.now();
+        const twoMinutesAgo = new firebase.firestore.Timestamp(
+            nowForQueue.seconds - (2 * 60),  // Changed from 5 to 2 minutes
+            nowForQueue.nanoseconds
+        );
+
+        // Delete old waiting entries
+        const oldQueue = await db.collection('matchmaking')
+            .where('joinedAt', '<', twoMinutesAgo)
+            .limit(20)
+            .get();
+
+        console.log(`Found ${oldQueue.size} old queue entries to clean up`);
+
+        for (const doc of oldQueue.docs) {
+            await doc.ref.delete();
+            console.log(`Deleted old queue entry: ${doc.id}`);
+        }
+
+        // Also delete matched entries (they should have been deleted by the players)
+        const matchedQueue = await db.collection('matchmaking')
+            .where('status', '==', 'matched')
+            .limit(20)
+            .get();
+
+        console.log(`Found ${matchedQueue.size} matched entries to clean up`);
+
+        for (const doc of matchedQueue.docs) {
+            await doc.ref.delete();
+            console.log(`Deleted matched queue entry: ${doc.id}`);
         }
     } catch (error) {
         console.log('Cleanup error:', error);
@@ -1554,4 +1646,340 @@ function updateDebugSlice() {
     
     // Hide marker when changing slices
     debugMarker.classList.remove('show');
+}
+
+// ============================================
+// AUTHENTICATION
+// ============================================
+
+const auth = firebase.auth();
+let currentUser = null;
+
+// DOM elements
+const signedOutState = document.getElementById('signed-out-state');
+const signedInState = document.getElementById('signed-in-state');
+const displayNameSection = document.getElementById('display-name-section');
+const displayNameInput = document.getElementById('display-name-input');
+const googleSigninBtn = document.getElementById('google-signin-btn');
+const playAnonymousBtn = document.getElementById('play-anonymous-btn');
+const signoutBtn = document.getElementById('signout-btn');
+const userPhoto = document.getElementById('user-photo');
+const userName = document.getElementById('user-name');
+
+// Listen for auth state changes
+auth.onAuthStateChanged((user) => {
+    currentUser = user;
+    
+    if (user) {
+        // User is signed in
+        console.log('Signed in as:', user.displayName || user.uid);
+        
+        // Update UI
+        signedOutState.classList.add('hidden');
+        signedInState.classList.remove('hidden');
+        displayNameSection.classList.remove('hidden');
+        
+        if (user.isAnonymous) {
+            userName.textContent = 'Guest Player';
+            userPhoto.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="50" height="50"><circle cx="25" cy="25" r="25" fill="%23666"/><text x="25" y="35" text-anchor="middle" fill="white" font-size="24">?</text></svg>';
+            displayNameInput.placeholder = 'Enter your display name';
+        } else {
+            userName.textContent = user.displayName;
+            userPhoto.src = user.photoURL || '';
+            displayNameInput.value = user.displayName; // Pre-fill with Google name
+        }
+    } else {
+        // User is signed out
+        signedOutState.classList.remove('hidden');
+        signedInState.classList.add('hidden');
+        displayNameSection.classList.add('hidden');
+    }
+});
+
+// Google Sign In
+googleSigninBtn.addEventListener('click', async () => {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    try {
+        await auth.signInWithPopup(provider);
+    } catch (error) {
+        console.error('Sign in error:', error);
+        alert('Sign in failed. Please try again.');
+    }
+});
+
+// Anonymous Sign In
+playAnonymousBtn.addEventListener('click', async () => {
+    try {
+        await auth.signInAnonymously();
+    } catch (error) {
+        console.error('Anonymous sign in error:', error);
+        alert('Could not start session. Please try again.');
+    }
+});
+
+// Sign Out
+signoutBtn.addEventListener('click', async () => {
+    try {
+        await auth.signOut();
+        playerName = '';
+    } catch (error) {
+        console.error('Sign out error:', error);
+    }
+});
+
+// ============================================
+// MATCHMAKING SYSTEM
+// ============================================
+
+const findMatchBtn = document.getElementById('find-match-btn');
+const matchmakingPanel = document.getElementById('matchmaking-panel');
+const cancelMatchmakingBtn = document.getElementById('cancel-matchmaking-btn');
+const queueCount = document.getElementById('queue-count');
+
+let matchmakingListener = null;
+let queueCountListener = null;
+let myQueueId = null;
+
+// Find Match
+findMatchBtn.addEventListener('click', async () => {
+    // Check if signed in
+    if (!currentUser) {
+        alert('Please sign in or play as guest first');
+        return;
+    }
+    
+    // Get player name
+    playerName = getPlayerName();
+    
+    // Show matchmaking panel
+    lobbyMenu.classList.add('hidden');
+    matchmakingPanel.classList.remove('hidden');
+    
+    // Add to matchmaking queue
+    await joinMatchmakingQueue();
+});
+
+// Cancel Matchmaking
+cancelMatchmakingBtn.addEventListener('click', async () => {
+    await leaveMatchmakingQueue();
+    
+    // Return to lobby
+    matchmakingPanel.classList.add('hidden');
+    lobbyMenu.classList.remove('hidden');
+});
+
+// Join matchmaking queue
+async function joinMatchmakingQueue() {
+    try {
+        // Reset UI
+        document.querySelector('.matchmaking-status').textContent = 'Looking for opponents...';
+        cancelMatchmakingBtn.style.display = 'block';
+        
+        // Add player to queue
+        const queueRef = db.collection('matchmaking');
+        const queueDoc = await queueRef.add({
+            playerId: currentUser.uid,
+            playerName: playerName,
+            joinedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            status: 'waiting'
+        });
+        
+        myQueueId = queueDoc.id;
+        console.log('Joined matchmaking queue:', myQueueId);
+        
+        // Listen for queue changes and matching
+        listenForMatchmaking();
+        
+    } catch (error) {
+        console.error('Matchmaking error:', error);
+        alert('Could not join matchmaking. Please try again.');
+    }
+}
+
+// Leave matchmaking queue
+async function leaveMatchmakingQueue() {
+    if (matchmakingListener) {
+        matchmakingListener();
+        matchmakingListener = null;
+    }
+    
+    if (queueCountListener) {
+        queueCountListener();
+        queueCountListener = null;
+    }
+    
+    if (myQueueId) {
+        try {
+            await db.collection('matchmaking').doc(myQueueId).delete();
+            console.log('Left matchmaking queue');
+        } catch (error) {
+            console.error('Error leaving queue:', error);
+        }
+        myQueueId = null;
+    }
+}
+
+// Listen for matchmaking
+function listenForMatchmaking() {
+    // Listen to our own queue entry for matched status
+    const myQueueRef = db.collection('matchmaking').doc(myQueueId);
+    
+    matchmakingListener = myQueueRef.onSnapshot(async (doc) => {
+        if (!doc.exists) return;
+        
+        const data = doc.data();
+        
+        // Check if we've been matched
+        if (data.status === 'matched' && data.roomCode) {
+            console.log('Match found! Joining room:', data.roomCode);
+            
+            // Update UI to show we're joining
+            document.querySelector('.matchmaking-status').textContent = 'Match found! Setting up game...';
+            cancelMatchmakingBtn.style.display = 'none';
+            
+            // Stop listeners first
+            if (matchmakingListener) {
+                matchmakingListener();
+                matchmakingListener = null;
+            }
+            if (queueCountListener) {
+                queueCountListener();
+                queueCountListener = null;
+            }
+            
+            // Delete our queue entry immediately
+            if (myQueueId) {
+                await db.collection('matchmaking').doc(myQueueId).delete();
+                myQueueId = null;
+            }
+            
+            // Join the room
+            currentRoomCode = data.roomCode;
+            roomRef = db.collection('rooms').doc(currentRoomCode);
+            playersRef = roomRef.collection('players');
+            
+            // Check if we're the creator
+            const playerDoc = await playersRef.doc(playerName).get();
+            if (playerDoc.exists) {
+                isRoomCreator = playerDoc.data().isCreator || false;
+            }
+            
+            // Keep matchmaking panel visible until game starts
+            // listenForGameStart will hide it when game begins
+            
+            // Listen for game start
+            listenForGameStart();
+        }
+    });
+    
+    // Also listen to overall queue to trigger matching AND update count
+    const queueRef = db.collection('matchmaking').where('status', '==', 'waiting');
+    
+    queueCountListener = queueRef.onSnapshot(async (snapshot) => {
+        const waitingPlayers = snapshot.docs;
+        
+        // Update queue count
+        queueCount.textContent = waitingPlayers.length;
+        
+        console.log('Players in queue:', waitingPlayers.length);
+        
+        // If 2+ players, attempt to create a match
+        if (waitingPlayers.length >= 2) {
+            // Sort by join time
+            const sortedPlayers = waitingPlayers.sort((a, b) => {
+                const aTime = a.data().joinedAt?.toMillis() || 0;
+                const bTime = b.data().joinedAt?.toMillis() || 0;
+                return aTime - bTime;
+            });
+            
+            // Only the first player creates the room
+            const firstPlayer = sortedPlayers[0];
+            const isFirstPlayer = firstPlayer.id === myQueueId;
+            
+            if (isFirstPlayer) {
+                console.log('I am first player, creating match');
+                await createMatchFromQueue(sortedPlayers.slice(0, 2));
+            } else {
+                console.log('Waiting for match to be created...');
+            }
+        }
+    });
+}
+
+// Create a match from queue
+async function createMatchFromQueue(playerDocs) {
+    try {
+        // Check if we already created a room (prevent duplicates)
+        const firstDoc = playerDocs[0];
+        if (firstDoc.data().status === 'matched') {
+            console.log('Match already created, skipping');
+            return;
+        }
+        
+        // Generate room code
+        const roomCode = generateRoomCode();
+        
+        console.log('Creating match room:', roomCode, 'with players:', playerDocs.map(d => d.data().playerName));
+        
+        // Create room
+        const newRoomRef = db.collection('rooms').doc(roomCode);
+        await newRoomRef.set({
+            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+            createdBy: playerDocs[0].data().playerName,
+            timerSeconds: 30,
+            status: 'waiting',
+            currentRound: 0,
+            questionOrder: [],
+            matchmade: true
+        });
+        
+        const newPlayersRef = newRoomRef.collection('players');
+        
+        // Add all players to the room
+        for (let i = 0; i < playerDocs.length; i++) {
+            const data = playerDocs[i].data();
+            await newPlayersRef.doc(data.playerName).set({
+                name: data.playerName,
+                joinedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                isCreator: i === 0,
+                score: 0
+            });
+        }
+        
+        console.log('Players added to room');
+        
+        // Mark ALL queue entries as matched
+        for (const doc of playerDocs) {
+            await db.collection('matchmaking').doc(doc.id).update({ 
+                status: 'matched',
+                roomCode: roomCode 
+            });
+        }
+        
+        console.log('All queue entries marked as matched');
+        
+        // Auto-start game after 3 seconds
+        setTimeout(async () => {
+            try {
+                // Generate question order
+                const questionIds = questionsData.questions.map(q => q.id);
+                const shuffled = questionIds.sort(() => Math.random() - 0.5).slice(0, 5);
+                
+                await newRoomRef.update({
+                    status: 'playing',
+                    currentRound: 1,
+                    questionOrder: shuffled,
+                    timerSeconds: 30,
+                    roundStartTime: firebase.firestore.FieldValue.serverTimestamp()
+                });
+                
+                console.log('Game auto-started');
+            } catch (error) {
+                console.error('Error starting game:', error);
+            }
+        }, 3000);
+        
+    } catch (error) {
+        console.error('Error creating match:', error);
+    }
 }
