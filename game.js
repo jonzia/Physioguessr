@@ -1548,10 +1548,9 @@ if (savedStats) {
     Object.assign(usageStats, JSON.parse(savedStats));
 }
 
-// Run cleanup when app loads
-cleanupOldRooms();
+// Don't run cleanup immediately - wait for auth
 
-// Run cleanup every 10 minutes
+// Run cleanup every 10 minutes (will start after first auth)
 setInterval(cleanupOldRooms, 10 * 60 * 1000);
 
 // ============================================
@@ -1675,6 +1674,9 @@ auth.onAuthStateChanged((user) => {
     if (user) {
         // User is signed in
         console.log('Signed in as:', user.displayName || user.uid);
+        
+        // Run cleanup now that we're authenticated
+        cleanupOldRooms();
         
         // Update UI
         signedOutState.classList.add('hidden');
