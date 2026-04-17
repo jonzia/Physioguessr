@@ -151,14 +151,16 @@ function showNotification(message) {
 
 // Get player name from input or generate from user
 function getPlayerName() {
-    const inputName = displayNameInput.value.trim();
-    if (inputName.length > 0) {
-        return inputName;
+    // Use display name input (new auth system)
+    if (displayNameInput && displayNameInput.value.trim().length > 0) {
+        return displayNameInput.value.trim();
     }
-    // Fallback to Google name or random
+    
+    // Fallback to user's Google name or random
     if (currentUser) {
         return currentUser.displayName || `Player-${currentUser.uid.substr(0, 6)}`;
     }
+    
     return 'Player-' + Math.random().toString(36).substr(2, 4).toUpperCase();
 }
 
