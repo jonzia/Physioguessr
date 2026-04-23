@@ -26,6 +26,11 @@ const timerValue = document.getElementById('timer-value');
 const playerNameDisplay = document.getElementById('player-name-display');
 const leaderboardList = document.getElementById('leaderboard-list');
 const singlePlayerBtn = document.getElementById('single-player-btn');
+const questionSetSelect = document.getElementById('question-set-select');
+const singlePlayerSetSelect = document.getElementById('single-player-set-select');
+const singlePlayerPanel = document.getElementById('single-player-panel');
+const startSinglePlayerBtn = document.getElementById('start-single-player-btn');
+const backFromSingleBtn = document.getElementById('back-from-single-btn');
 
 // Lobby menu buttons
 const lobbyMenu = document.querySelector('.lobby-menu');
@@ -48,6 +53,8 @@ let autoAdvanceCountdown = null;
 let lastSeenRound = 0; // Track last round we processed
 let hasGameStarted = false;
 let lastPlayerCount = 0;
+let questionSetsData = null;
+let selectedQuestionSet = 'default';
 
 // Track player presence in Firebase
 function setupPresenceTracking() {
@@ -176,10 +183,32 @@ singlePlayerBtn.addEventListener('click', () => {
         return;
     }
     
-    // Get player name from display name input
+    // Show single player panel
+    lobbyMenu.classList.add('hidden');
+    singlePlayerPanel.classList.remove('hidden');
+});
+
+// Back button
+backFromSingleBtn.addEventListener('click', () => {
+    singlePlayerPanel.classList.add('hidden');
+    lobbyMenu.classList.remove('hidden');
+});
+
+// Start single player game
+startSinglePlayerBtn.addEventListener('click', () => {
+    // Get selected set
+    selectedQuestionSet = singlePlayerSetSelect.value;
+    const questions = getQuestionsFromSet(selectedQuestionSet);
+    
+    if (questions.length < 5) {
+        alert('Not enough questions in this set (need at least 5)');
+        return;
+    }
+    
+    // Get player name
     playerName = getPlayerName();
     
-    // Set single-player mode (no room)
+    // Set single-player mode
     currentRoomCode = null;
     isRoomCreator = false;
     
@@ -191,9 +220,9 @@ singlePlayerBtn.addEventListener('click', () => {
     // Display player name
     playerNameDisplay.textContent = playerName;
     
-    // Show end game button for single player (to return to menu)
-    endGameBtn.style.display = 'block';  // CHANGED from 'none'
-    endGameBtn.textContent = 'End Game';  // ADD THIS
+    // Show end game button
+    endGameBtn.style.display = 'block';
+    endGameBtn.textContent = 'End Game';
     
     // Reset game state
     currentRound = 1;
@@ -205,7 +234,7 @@ singlePlayerBtn.addEventListener('click', () => {
     // Start game
     loadNewQuestion();
     
-    console.log('Single player mode started');
+    console.log('Single player mode started with set:', selectedQuestionSet);
 });
 
 // Create Room
@@ -239,6 +268,7 @@ createRoomBtn.addEventListener('click', async () => {
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         createdBy: playerName,
         timerSeconds: parseInt(timerSetting.value),
+        questionSetId: questionSetSelect.value,  // ADD THIS
         status: 'waiting',
         currentRound: 0,
         questionOrder: []
@@ -375,10 +405,13 @@ startGameBtn.addEventListener('click', async () => {
     if (!isRoomCreator) return;
     
     const timerValue = parseInt(timerSetting.value);
-    console.log('Starting game with timer:', timerValue);
+    const setId = questionSetSelect.value;
+    const questions = getQuestionsFromSet(setId);
     
-    // Generate random question order
-    const questionIds = questionsData.questions.map(q => q.id);
+    console.log('Starting game with timer:', timerValue, 'and set:', setId);
+    
+    // Generate random question order from selected set
+    const questionIds = questions.map(q => q.id);
     const shuffled = questionIds.sort(() => Math.random() - 0.5).slice(0, 5);
     
     await roomRef.update({
@@ -386,6 +419,7 @@ startGameBtn.addEventListener('click', async () => {
         currentRound: 1,
         questionOrder: shuffled,
         timerSeconds: timerValue,
+        questionSetId: setId,  // ADD THIS
         roundStartTime: firebase.firestore.FieldValue.serverTimestamp()
     });
     
@@ -692,7 +726,6 @@ let totalScore = 0;
 // Initialize
 totalSlicesSpan.textContent = totalSlices;
 updateSlice();
-loadQuestionsAndStart();
 
 // Window resize handler for both main game and results modal markers
 window.addEventListener('resize', () => {
@@ -866,15 +899,14 @@ async function loadQuestionsAndStart() {
 
 // Load a random question (single-player) OR next question from room order (multiplayer)
 function loadNewQuestion() {
-    if (!questionsData) return;
-    
     // MULTIPLAYER MODE
     if (currentRoomCode) {
-        // Get question from room's predetermined order
         roomRef.get().then((doc) => {
             const roomData = doc.data();
+            const setId = roomData.questionSetId || 'default';
+            const questions = getQuestionsFromSet(setId);
             const questionId = roomData.questionOrder[currentRound - 1];
-            currentQuestion = questionsData.questions.find(q => q.id === questionId);
+            currentQuestion = questions.find(q => q.id === questionId);
             
             if (currentQuestion) {
                 symptomsText.textContent = currentQuestion.prompt;
@@ -886,8 +918,10 @@ function loadNewQuestion() {
         return;
     }
     
-    // SINGLE-PLAYER MODE (original logic)
-    const availableQuestions = questionsData.questions.filter(
+    // SINGLE-PLAYER MODE
+    const questions = getQuestionsFromSet(selectedQuestionSet);
+    
+    const availableQuestions = questions.filter(
         q => !usedQuestions.includes(q.id)
     );
     
@@ -1554,100 +1588,585 @@ if (savedStats) {
 setInterval(cleanupOldRooms, 10 * 60 * 1000);
 
 // ============================================
-// DEBUG COORDINATE PICKER
+// QUESTION SET MANAGER
 // ============================================
 
-const debugCoordsBtn = document.getElementById('debug-coords-btn');
-const debugModal = document.getElementById('debug-modal');
-const debugOverlay = document.getElementById('debug-overlay');
-const debugSlice = document.getElementById('debug-slice');
-const debugSlider = document.getElementById('debug-slider');
-const debugSliceNum = document.getElementById('debug-slice-num');
-const debugMarker = document.getElementById('debug-marker');
-const debugX = document.getElementById('debug-x');
-const debugY = document.getElementById('debug-y');
-const debugSliceVal = document.getElementById('debug-slice-val');
-const copyCoordsBtn = document.getElementById('copy-coords-btn');
-const copyHint = document.getElementById('copy-hint');
-const closeDebugBtn = document.getElementById('close-debug-btn');
+// DOM Elements
+const setManagerBtn = document.getElementById('debug-coords-btn');
+const setManagerModal = document.getElementById('set-manager-modal');
+const setManagerOverlay = document.getElementById('set-manager-overlay');
+const setManagerMenu = document.getElementById('set-manager-menu');
+const closeManagerBtn = document.getElementById('close-manager-btn');
+const managerLoading = document.getElementById('manager-loading');
 
-let debugCurrentSlice = 13;
-let debugClickPos = null;
+// Panels
+const setEditorPanel = document.getElementById('set-editor-panel');
+const questionEditorPanel = document.getElementById('question-editor-panel');
+const deleteSetPanel = document.getElementById('delete-set-panel');
+const editSetSelectorPanel = document.getElementById('edit-set-selector-panel');
 
-// Open debug modal
-debugCoordsBtn.addEventListener('click', () => {
-    debugOverlay.classList.remove('hidden');
-    debugModal.classList.remove('hidden');
-    updateDebugSlice();
+// Set Editor Elements
+const editorTitle = document.getElementById('editor-title');
+const setNameInput = document.getElementById('set-name-input');
+const setDescriptionInput = document.getElementById('set-description-input');
+const setPublicCheckbox = document.getElementById('set-public-checkbox');
+const questionsList = document.getElementById('questions-list');
+const addQuestionBtn = document.getElementById('add-question-btn');
+const saveSetBtn = document.getElementById('save-set-btn');
+const deleteCurrentSetBtn = document.getElementById('delete-current-set-btn');
+const cancelEditorBtn = document.getElementById('cancel-editor-btn');
+
+// Question Editor Elements
+const questionEditorTitle = document.getElementById('question-editor-title');
+const questionPromptInput = document.getElementById('question-prompt-input');
+const questionDescriptionInput = document.getElementById('question-description-input');
+const questionMriSlice = document.getElementById('question-mri-slice');
+const questionMarker = document.getElementById('question-marker');
+const questionSliceSlider = document.getElementById('question-slice-slider');
+const questionSliceNum = document.getElementById('question-slice-num');
+const questionXDisplay = document.getElementById('question-x-display');
+const questionYDisplay = document.getElementById('question-y-display');
+const questionSliceDisplay = document.getElementById('question-slice-display');
+const saveQuestionBtn = document.getElementById('save-question-btn');
+const cancelQuestionBtn = document.getElementById('cancel-question-btn');
+
+// Delete/Edit Selectors
+const editSetSelect = document.getElementById('edit-set-select');
+const deleteSetSelect = document.getElementById('delete-set-select');
+const confirmEditSetBtn = document.getElementById('confirm-edit-set-btn');
+const confirmDeleteSetBtn = document.getElementById('confirm-delete-set-btn');
+const cancelEditSelectBtn = document.getElementById('cancel-edit-select-btn');
+const cancelDeleteBtn = document.getElementById('cancel-delete-btn');
+
+// Manager State
+let currentEditingSet = null;
+let currentEditingSetId = null;
+let currentEditingQuestions = [];
+let currentEditingQuestionIndex = null;
+let questionCoordinates = null;
+let currentQuestionSlice = 13;
+
+// Open Set Manager
+setManagerBtn.addEventListener('click', () => {
+    setManagerOverlay.classList.remove('hidden');
+    setManagerModal.classList.remove('hidden');
+    showManagerMenu();
 });
 
-// Close debug modal
-closeDebugBtn.addEventListener('click', () => {
-    debugOverlay.classList.add('hidden');
-    debugModal.classList.add('hidden');
+// Close Set Manager
+closeManagerBtn.addEventListener('click', () => {
+    setManagerOverlay.classList.add('hidden');
+    setManagerModal.classList.add('hidden');
+    resetManager();
 });
 
-// Slider change
-debugSlider.addEventListener('input', (e) => {
-    debugCurrentSlice = parseInt(e.target.value);
-    updateDebugSlice();
+function showManagerLoading(message = 'Saving changes...') {
+    managerLoading.querySelector('p').textContent = message;
+    managerLoading.classList.remove('hidden');
+}
+
+function hideManagerLoading() {
+    managerLoading.classList.add('hidden');
+}
+
+// Show main menu
+function showManagerMenu() {
+    setManagerMenu.classList.remove('hidden');
+    setEditorPanel.classList.add('hidden');
+    questionEditorPanel.classList.add('hidden');
+    deleteSetPanel.classList.add('hidden');
+    editSetSelectorPanel.classList.add('hidden');
+}
+
+// Reset manager state
+function resetManager() {
+    currentEditingSet = null;
+    currentEditingSetId = null;
+    currentEditingQuestions = [];
+    currentEditingQuestionIndex = null;
+    questionCoordinates = null;
+    setNameInput.value = '';
+    setDescriptionInput.value = '';
+    setPublicCheckbox.checked = false;
+    questionsList.innerHTML = '';
+}
+
+// Create New Set
+document.getElementById('create-set-btn').addEventListener('click', () => {
+    resetManager();
+    editorTitle.textContent = 'Create New Question Set';
+    deleteCurrentSetBtn.classList.add('hidden');
+    setManagerMenu.classList.add('hidden');
+    setEditorPanel.classList.remove('hidden');
+    renderQuestionsList();
 });
 
-// Click on image
-debugSlice.addEventListener('click', (e) => {
-    const rect = debugSlice.getBoundingClientRect();
-    const viewer = document.querySelector('.debug-viewer');
+// Edit Existing Set
+document.getElementById('edit-set-btn').addEventListener('click', () => {
+    populateUserSetsDropdown(editSetSelect);
+    setManagerMenu.classList.add('hidden');
+    editSetSelectorPanel.classList.remove('hidden');
+});
+
+// Confirm Edit Set Selection
+confirmEditSetBtn.addEventListener('click', async () => {
+    const setId = editSetSelect.value;
+    if (!setId) {
+        alert('Please select a set to edit');
+        return;
+    }
+    
+    await loadSetForEditing(setId);
+});
+
+// Load set for editing
+async function loadSetForEditing(setId) {
+    try {
+        const setDoc = await db.collection('questionSets').doc(setId).get();
+        
+        if (!setDoc.exists) {
+            alert('Set not found');
+            return;
+        }
+        
+        const setData = setDoc.data();
+        
+        // Check if user owns this set
+        if (setData.createdBy !== currentUser.uid) {
+            alert('You can only edit your own sets');
+            return;
+        }
+        
+        // Load set data
+        currentEditingSetId = setId;
+        setNameInput.value = setData.name;
+        setDescriptionInput.value = setData.description;
+        setPublicCheckbox.checked = setData.isPublic;
+        
+        // Load questions
+        const questionsSnapshot = await db.collection('questionSets').doc(setId).collection('questions').get();
+        currentEditingQuestions = questionsSnapshot.docs.map(doc => doc.data());
+        
+        // Show editor
+        editorTitle.textContent = 'Edit Question Set';
+        deleteCurrentSetBtn.classList.remove('hidden');
+        editSetSelectorPanel.classList.add('hidden');
+        setEditorPanel.classList.remove('hidden');
+        renderQuestionsList();
+        
+    } catch (error) {
+        console.error('Error loading set:', error);
+        alert('Error loading set');
+    }
+}
+
+// Delete Set
+document.getElementById('delete-set-btn').addEventListener('click', () => {
+    populateUserSetsDropdown(deleteSetSelect);
+    setManagerMenu.classList.add('hidden');
+    deleteSetPanel.classList.remove('hidden');
+});
+
+// Populate dropdown with user's sets
+function populateUserSetsDropdown(selectElement) {
+    selectElement.innerHTML = '<option value="">Choose a set...</option>';
+    
+    if (!questionSetsData) return;
+    
+    questionSetsData.questionSets
+        .filter(set => set.createdBy === currentUser.uid)
+        .forEach(set => {
+            const option = document.createElement('option');
+            option.value = set.id;
+            option.textContent = `$${set.name} ($${set.questions.length} questions)`;
+            selectElement.appendChild(option);
+        });
+}
+
+// Confirm Delete Set
+confirmDeleteSetBtn.addEventListener('click', async () => {
+    const setId = deleteSetSelect.value;
+    if (!setId) {
+        alert('Please select a set to delete');
+        return;
+    }
+    
+    if (!confirm('Are you sure you want to delete this set? This cannot be undone.')) {
+        return;
+    }
+
+    showManagerLoading('Deleting set...');
+    
+    try {
+        const setRef = db.collection('questionSets').doc(setId);
+        
+        // Delete all questions first
+        const questionsSnapshot = await setRef.collection('questions').get();
+        const deletePromises = questionsSnapshot.docs.map(doc => doc.ref.delete());
+        await Promise.all(deletePromises);
+        
+        // Delete the set
+        await setRef.delete();
+        
+        alert('Set deleted successfully');
+        
+        // Reload question sets
+        await loadQuestionSets();
+        
+        // Return to menu
+        showManagerMenu();
+        
+    } catch (error) {
+        console.error('Error deleting set:', error);
+        alert('Error deleting set: ' + error.message);
+    } finally {
+        hideManagerLoading();
+    }
+});
+
+// Render questions list
+function renderQuestionsList() {
+    if (currentEditingQuestions.length === 0) {
+        questionsList.innerHTML = '<div class="empty-state">No questions yet. Click "Add Question" to create one.</div>';
+        return;
+    }
+    
+    questionsList.innerHTML = '';
+    
+    currentEditingQuestions.forEach((question, index) => {
+        const item = document.createElement('div');
+        item.className = 'question-item';
+        
+        const promptPreview = question.prompt.length > 100 ? 
+            question.prompt.substring(0, 100) + '...' : 
+            question.prompt;
+        
+        const header = document.createElement('div');
+        header.className = 'question-item-header';
+        
+        const promptDiv = document.createElement('div');
+        promptDiv.className = 'question-item-prompt';
+        promptDiv.textContent = promptPreview;
+        
+        const actionsDiv = document.createElement('div');
+        actionsDiv.className = 'question-item-actions';
+        
+        const editBtn = document.createElement('button');
+        editBtn.textContent = 'Edit';
+        editBtn.onclick = () => editQuestion(index);
+        
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'delete-btn';
+        deleteBtn.textContent = 'Delete';
+        deleteBtn.onclick = () => deleteQuestion(index);
+        
+        actionsDiv.appendChild(editBtn);
+        actionsDiv.appendChild(deleteBtn);
+        
+        header.appendChild(promptDiv);
+        header.appendChild(actionsDiv);
+        
+        const details = document.createElement('div');
+        details.className = 'question-item-details';
+        details.textContent = 'Location: ' + question.description + ' | Coordinates: (' + 
+            question.x + ', ' + question.y + ', slice ' + question.slice + ')';
+        
+        item.appendChild(header);
+        item.appendChild(details);
+        
+        questionsList.appendChild(item);
+    });
+}
+
+// Add Question
+addQuestionBtn.addEventListener('click', () => {
+    currentEditingQuestionIndex = null;
+    questionEditorTitle.textContent = 'Add Question';
+    questionPromptInput.value = '';
+    questionDescriptionInput.value = '';
+    questionCoordinates = null;
+    currentQuestionSlice = 13;
+    questionSliceSlider.value = 13;
+    updateQuestionSlice();
+    questionMarker.classList.remove('show');
+    questionXDisplay.textContent = '-';
+    questionYDisplay.textContent = '-';
+    questionSliceDisplay.textContent = '-';
+    
+    setEditorPanel.classList.add('hidden');
+    questionEditorPanel.classList.remove('hidden');
+});
+
+// Edit Question (global function for onclick)
+window.editQuestion = function(index) {
+    currentEditingQuestionIndex = index;
+    const question = currentEditingQuestions[index];
+    
+    questionEditorTitle.textContent = 'Edit Question';
+    questionPromptInput.value = question.prompt;
+    questionDescriptionInput.value = question.description;
+    questionCoordinates = { x: question.x, y: question.y, slice: question.slice };
+    currentQuestionSlice = question.slice;
+    questionSliceSlider.value = question.slice;
+    updateQuestionSlice();
+    
+    questionXDisplay.textContent = question.x;
+    questionYDisplay.textContent = question.y;
+    questionSliceDisplay.textContent = question.slice;
+    
+    // Show marker at saved position
+    questionMarker.classList.add('show');
+    
+    setEditorPanel.classList.add('hidden');
+    questionEditorPanel.classList.remove('hidden');
+};
+
+// Delete Question (global function for onclick)
+window.deleteQuestion = function(index) {
+    if (confirm('Delete this question?')) {
+        currentEditingQuestions.splice(index, 1);
+        renderQuestionsList();
+    }
+};
+
+// Question MRI slice slider
+questionSliceSlider.addEventListener('input', (e) => {
+    currentQuestionSlice = parseInt(e.target.value);
+    updateQuestionSlice();
+});
+
+// Update question MRI slice
+function updateQuestionSlice() {
+    const sliceStr = String(currentQuestionSlice).padStart(3, '0');
+    questionMriSlice.src = `images/slice_${sliceStr}.png`;
+    questionSliceNum.textContent = currentQuestionSlice;
+}
+
+// Click on MRI to set coordinates
+questionMriSlice.addEventListener('click', (e) => {
+    const rect = questionMriSlice.getBoundingClientRect();
+    const viewer = document.querySelector('.question-mri-viewer');
     const viewerRect = viewer.getBoundingClientRect();
     
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     
-    debugClickPos = {
-        x: (x / rect.width).toFixed(4),
-        y: (y / rect.height).toFixed(4),
-        slice: debugCurrentSlice
+    questionCoordinates = {
+        x: parseFloat((x / rect.width).toFixed(4)),
+        y: parseFloat((y / rect.height).toFixed(4)),
+        slice: currentQuestionSlice
     };
     
-    // Position marker relative to viewer container (not image)
+    // Position marker
     const markerX = e.clientX - viewerRect.left;
     const markerY = e.clientY - viewerRect.top;
     
-    debugMarker.style.left = markerX + 'px';
-    debugMarker.style.top = markerY + 'px';
-    debugMarker.classList.add('show');
+    questionMarker.style.left = markerX + 'px';
+    questionMarker.style.top = markerY + 'px';
+    questionMarker.classList.add('show');
     
-    // Update output fields
-    debugX.value = debugClickPos.x;
-    debugY.value = debugClickPos.y;
-    debugSliceVal.value = debugClickPos.slice;
+    // Update displays
+    questionXDisplay.textContent = questionCoordinates.x;
+    questionYDisplay.textContent = questionCoordinates.y;
+    questionSliceDisplay.textContent = questionCoordinates.slice;
 });
 
-// Copy coordinates
-copyCoordsBtn.addEventListener('click', () => {
-    if (!debugClickPos) {
-        alert('Click on the image first to select coordinates');
+// Save Question
+saveQuestionBtn.addEventListener('click', () => {
+    const prompt = questionPromptInput.value.trim();
+    const description = questionDescriptionInput.value.trim();
+    
+    if (!prompt) {
+        alert('Please enter a clinical prompt');
         return;
     }
     
-    const coordText = `"x": ${debugClickPos.x},\n"y": ${debugClickPos.y},\n"slice": ${debugClickPos.slice}`;
+    if (!description) {
+        alert('Please enter an anatomical description');
+        return;
+    }
     
-    navigator.clipboard.writeText(coordText).then(() => {
-        copyHint.classList.remove('hidden');
-        setTimeout(() => {
-            copyHint.classList.add('hidden');
-        }, 2000);
-    });
+    if (!questionCoordinates) {
+        alert('Please click on the MRI to set the target location');
+        return;
+    }
+    
+    const question = {
+        id: currentEditingQuestionIndex !== null ? 
+            currentEditingQuestions[currentEditingQuestionIndex].id : 
+            'q' + Date.now(),
+        prompt: prompt,
+        description: description,
+        x: questionCoordinates.x,
+        y: questionCoordinates.y,
+        slice: questionCoordinates.slice
+    };
+    
+    if (currentEditingQuestionIndex !== null) {
+        // Update existing question
+        currentEditingQuestions[currentEditingQuestionIndex] = question;
+    } else {
+        // Add new question
+        currentEditingQuestions.push(question);
+    }
+    
+    // Return to set editor
+    questionEditorPanel.classList.add('hidden');
+    setEditorPanel.classList.remove('hidden');
+    renderQuestionsList();
 });
 
-// Update slice image
-function updateDebugSlice() {
-    const sliceStr = String(debugCurrentSlice).padStart(3, '0');
-    debugSlice.src = `images/slice_${sliceStr}.png`;
-    debugSliceNum.textContent = debugCurrentSlice;
+// Cancel Question Edit
+cancelQuestionBtn.addEventListener('click', () => {
+    questionEditorPanel.classList.add('hidden');
+    setEditorPanel.classList.remove('hidden');
+});
+
+// Save Set
+saveSetBtn.addEventListener('click', async () => {
+    console.log('Save Set clicked');
     
-    // Hide marker when changing slices
-    debugMarker.classList.remove('show');
-}
+    const name = setNameInput.value.trim();
+    const description = setDescriptionInput.value.trim();
+    const isPublic = setPublicCheckbox.checked;
+    
+    console.log('Set name:', name);
+    console.log('Questions count:', currentEditingQuestions.length);
+    
+    if (!name) {
+        alert('Please enter a set name');
+        return;
+    }
+    
+    if (currentEditingQuestions.length < 1) {
+        alert('Please add at least 1 question to the set');
+        return;
+    }
+
+    if (currentEditingQuestions.length > 100) {
+        alert('Maximum 100 questions per set');
+        return;
+    }
+    
+    showManagerLoading('Saving set...');
+    
+    try {
+        const setId = currentEditingSetId || ('set_' + Date.now());
+        console.log('Saving to set ID:', setId);
+        
+        const setRef = db.collection('questionSets').doc(setId);
+        
+        // Save set metadata
+        console.log('Saving metadata...');
+        await setRef.set({
+            id: setId,
+            name: name,
+            description: description,
+            createdBy: currentUser.uid,
+            createdByEmail: currentUser.email,
+            createdAt: currentEditingSetId ? 
+                (await setRef.get()).data().createdAt : 
+                firebase.firestore.FieldValue.serverTimestamp(),
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            isPublic: isPublic,
+            questionCount: currentEditingQuestions.length
+        });
+        console.log('Metadata saved');
+        
+        // Delete existing questions if editing
+        if (currentEditingSetId) {
+            console.log('Deleting existing questions...');
+            const existingQuestions = await setRef.collection('questions').get();
+            const deletePromises = existingQuestions.docs.map(doc => doc.ref.delete());
+            await Promise.all(deletePromises);
+            console.log('Existing questions deleted');
+        }
+        
+        // Save all questions
+        console.log('Saving', currentEditingQuestions.length, 'questions...');
+        const questionsRef = setRef.collection('questions');
+        for (const question of currentEditingQuestions) {
+            console.log('Saving question:', question.id);
+            await questionsRef.doc(question.id).set(question);
+        }
+        console.log('All questions saved');
+        
+        alert(currentEditingSetId ? 'Set updated successfully!' : 'Set created successfully!');
+        
+        // Reload question sets
+        console.log('Reloading question sets...');
+        await loadQuestionSets();
+        
+        // Return to menu
+        showManagerMenu();
+        resetManager();
+        
+    } catch (error) {
+        console.error('Error saving set:', error);
+        alert('Error saving set: ' + error.message);
+    } finally {
+        hideManagerLoading();
+    }
+});
+
+// Cancel Set Editor
+cancelEditorBtn.addEventListener('click', () => {
+    if (confirm('Discard changes?')) {
+        setEditorPanel.classList.add('hidden');
+        showManagerMenu();
+        resetManager();
+    }
+});
+
+// Delete Current Set (from editor)
+deleteCurrentSetBtn.addEventListener('click', async () => {
+    if (!currentEditingSetId) return;
+    
+    if (!confirm('Are you sure you want to delete this set? This cannot be undone.')) {
+        return;
+    }
+    
+    showManagerLoading('Deleting set...');  // Already there
+    
+    try {
+        const setRef = db.collection('questionSets').doc(currentEditingSetId);
+        
+        // Delete all questions
+        const questionsSnapshot = await setRef.collection('questions').get();
+        const deletePromises = questionsSnapshot.docs.map(doc => doc.ref.delete());
+        await Promise.all(deletePromises);
+        
+        // Delete the set
+        await setRef.delete();
+        
+        alert('Set deleted successfully');
+        
+        // Reload question sets
+        await loadQuestionSets();
+        
+        // Return to menu
+        showManagerMenu();
+        resetManager();
+        
+    } catch (error) {
+        console.error('Error deleting set:', error);
+        alert('Error deleting set: ' + error.message);
+    } finally {
+        hideManagerLoading();  // Already there
+    }
+});
+
+// Cancel Edit Set Selection
+cancelEditSelectBtn.addEventListener('click', () => {
+    editSetSelectorPanel.classList.add('hidden');
+    showManagerMenu();
+});
+
+// Cancel Delete Set
+cancelDeleteBtn.addEventListener('click', () => {
+    deleteSetPanel.classList.add('hidden');
+    showManagerMenu();
+});
 
 // ============================================
 // AUTHENTICATION
@@ -1678,6 +2197,9 @@ auth.onAuthStateChanged((user) => {
         // Run cleanup now that we're authenticated
         cleanupOldRooms();
         
+        // Reload question sets (to include user's private sets)
+        loadQuestionSets();
+        
         // Update UI
         signedOutState.classList.add('hidden');
         signedInState.classList.remove('hidden');
@@ -1692,11 +2214,22 @@ auth.onAuthStateChanged((user) => {
             userPhoto.src = user.photoURL || '';
             displayNameInput.value = user.displayName; // Pre-fill with Google name
         }
+
+        // Show question creator only for Google users (not anonymous)
+        if (user.isAnonymous) {
+            setManagerBtn.style.display = 'none';
+        } else {
+            setManagerBtn.style.display = 'block';
+        }
+
     } else {
         // User is signed out
         signedOutState.classList.remove('hidden');
         signedInState.classList.add('hidden');
         displayNameSection.classList.add('hidden');
+
+        // Hide question creator
+        setManagerBtn.style.display = 'none';
     }
 });
 
@@ -1986,4 +2519,111 @@ async function createMatchFromQueue(playerDocs) {
     } catch (error) {
         console.error('Error creating match:', error);
     }
+}
+
+// Load question sets from Firestore
+async function loadQuestionSets() {
+    try {
+        console.log('Loading question sets from Firestore...');
+        
+        questionSetsData = { questionSets: [] };
+        const loadedSetIds = new Set();
+        
+        // Get all public question sets
+        const publicSetsSnapshot = await db.collection('questionSets')
+            .where('isPublic', '==', true)
+            .get();
+        
+        console.log('Public sets found:', publicSetsSnapshot.size);  // DEBUG
+        
+        for (const doc of publicSetsSnapshot.docs) {
+            console.log('Processing public set:', doc.id);  // DEBUG
+            
+            if (loadedSetIds.has(doc.id)) {
+                console.log('DUPLICATE DETECTED:', doc.id);  // DEBUG
+                continue;
+            }
+            
+            const setData = doc.data();
+            const questionsSnapshot = await doc.ref.collection('questions').get();
+            const questions = questionsSnapshot.docs.map(qDoc => qDoc.data());
+            
+            questionSetsData.questionSets.push({
+                ...setData,
+                questions: questions
+            });
+            
+            loadedSetIds.add(doc.id);
+        }
+        
+        // If user is signed in, also get their private sets
+        if (currentUser && !currentUser.isAnonymous) {
+            console.log('Loading private sets for user:', currentUser.uid);  // DEBUG
+            
+            const userSetsSnapshot = await db.collection('questionSets')
+                .where('createdBy', '==', currentUser.uid)
+                .where('isPublic', '==', false)
+                .get();
+            
+            console.log('Private sets found:', userSetsSnapshot.size);  // DEBUG
+            
+            for (const doc of userSetsSnapshot.docs) {
+                console.log('Processing private set:', doc.id);  // DEBUG
+                
+                if (loadedSetIds.has(doc.id)) {
+                    console.log('DUPLICATE DETECTED:', doc.id);  // DEBUG
+                    continue;
+                }
+                
+                const setData = doc.data();
+                const questionsSnapshot = await doc.ref.collection('questions').get();
+                const questions = questionsSnapshot.docs.map(qDoc => qDoc.data());
+                
+                questionSetsData.questionSets.push({
+                    ...setData,
+                    questions: questions
+                });
+                
+                loadedSetIds.add(doc.id);
+            }
+        }
+        
+        console.log('Total question sets loaded:', questionSetsData.questionSets.length);
+        console.log('Question sets:', questionSetsData.questionSets.map(s => s.id));  // DEBUG
+        
+        // Populate dropdowns
+        populateQuestionSetDropdowns();
+        
+    } catch (error) {
+        console.error('Error loading question sets:', error);
+    }
+}
+
+// Populate question set dropdowns
+function populateQuestionSetDropdowns() {
+    if (!questionSetsData) return;
+    
+    // Clear existing options
+    questionSetSelect.innerHTML = '';
+    singlePlayerSetSelect.innerHTML = '';
+    
+    // Add each set as an option
+    questionSetsData.questionSets.forEach(set => {
+        const option1 = document.createElement('option');
+        option1.value = set.id;
+        option1.textContent = set.name + ' (' + set.questions.length + ' questions)';
+        questionSetSelect.appendChild(option1);
+        
+        const option2 = document.createElement('option');
+        option2.value = set.id;
+        option2.textContent = set.name + ' (' + set.questions.length + ' questions)';
+        singlePlayerSetSelect.appendChild(option2);
+    });
+}
+
+// Get questions from selected set
+function getQuestionsFromSet(setId) {
+    if (!questionSetsData) return [];
+    const set = questionSetsData.questionSets.find(s => s.id === setId);
+    return set ? set.questions : [];
 }

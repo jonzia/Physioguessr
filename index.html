@@ -44,16 +44,38 @@
                 <button id="create-room-btn" class="lobby-btn">Create Private Room</button>
                 <button id="join-room-btn" class="lobby-btn">Join Private Room</button>
                 <button id="single-player-btn" class="lobby-btn single-player-btn">Single Player</button>
-                <button id="debug-coords-btn" class="lobby-btn debug-btn">Question Creator</button>
+                <button id="debug-coords-btn" class="lobby-btn debug-btn">Manage Question Sets</button>
+            </div>
+
+            <!-- Single Player Panel -->
+            <div id="single-player-panel" class="lobby-panel hidden">
+                <h2>Single Player</h2>
+                
+                <div class="room-settings">
+                    <label>Question Set:</label>
+                    <select id="single-player-set-select" class="question-set-select">
+                        <option value="default">Default Question Set</option>
+                    </select>
+                </div>
+                
+                <button id="start-single-player-btn" class="lobby-btn">Start Game</button>
+                <button id="back-from-single-btn" class="lobby-btn cancel-btn">Back</button>
             </div>
             
             <!-- Create Room Panel -->
             <div id="create-room-panel" class="lobby-panel hidden">
                 <h2>Create Room</h2>
+                
                 <div class="room-settings">
                     <label>Round Timer (seconds):</label>
                     <input type="number" id="timer-setting" value="30" min="15" max="120">
+                    
+                    <label>Question Set:</label>
+                    <select id="question-set-select" class="question-set-select">
+                        <option value="default">Default Question Set</option>
+                    </select>
                 </div>
+                
                 <div class="room-code-display">
                     <p>Room Code:</p>
                     <h2 id="room-code-display"></h2>
@@ -204,44 +226,119 @@
         <button id="new-game">Start New Game</button>
     </div>
 
-    <!-- Debug Coordinate Picker Modal -->
-    <div id="debug-overlay" class="overlay hidden"></div>
-    <div id="debug-modal" class="debug-modal hidden">
-        <h2>Question Coordinate Picker</h2>
+    <!-- Question Set Manager Modal -->
+    <div id="set-manager-overlay" class="overlay hidden"></div>
+    <div id="set-manager-modal" class="set-manager-modal hidden">
+        <h2>Manage Question Sets</h2>
         
-        <div class="debug-content">
-            <div class="debug-viewer">
-                <img id="debug-slice" src="images/slice_013.png" alt="Brain slice">
-                <div id="debug-marker" class="debug-marker"></div>
+        <!-- Main Menu -->
+        <div id="set-manager-menu" class="set-manager-menu">
+            <button id="create-set-btn" class="manager-btn">➕ Create New Set</button>
+            <button id="edit-set-btn" class="manager-btn">✏️ Edit Existing Set</button>
+            <button id="delete-set-btn" class="manager-btn delete-btn">🗑️ Delete Set</button>
+            <button id="close-manager-btn" class="manager-btn">Close</button>
+        </div>
+        
+        <!-- Create/Edit Set Panel -->
+        <div id="set-editor-panel" class="manager-panel hidden">
+            <h3 id="editor-title">Create New Question Set</h3>
+            
+            <div class="set-metadata">
+                <label>Set Name:</label>
+                <input type="text" id="set-name-input" placeholder="e.g., Stroke Cases">
+                
+                <label>Description:</label>
+                <textarea id="set-description-input" placeholder="Brief description of this question set" rows="3"></textarea>
+                
+                <label>
+                    <input type="checkbox" id="set-public-checkbox">
+                    Make this set public (visible to all users)
+                </label>
             </div>
             
-            <div class="debug-controls">
-                <div class="debug-slider-container">
-                    <label>Slice: <span id="debug-slice-num">13</span> / 26</label>
-                    <input type="range" id="debug-slider" min="1" max="26" value="13" class="debug-slider">
-                </div>
-                
-                <div class="debug-output">
-                    <h3>Coordinates:</h3>
-                    <div class="coord-line">
-                        <span class="coord-label">x:</span>
-                        <input type="text" id="debug-x" readonly>
-                    </div>
-                    <div class="coord-line">
-                        <span class="coord-label">y:</span>
-                        <input type="text" id="debug-y" readonly>
-                    </div>
-                    <div class="coord-line">
-                        <span class="coord-label">slice:</span>
-                        <input type="text" id="debug-slice-val" readonly>
-                    </div>
-                    <button id="copy-coords-btn" class="lobby-btn">Copy Coordinates</button>
-                    <p class="copy-hint hidden" id="copy-hint">✓ Copied!</p>
-                </div>
+            <h4>Questions in this set:</h4>
+            <div id="questions-list" class="questions-list"></div>
+            
+            <button id="add-question-btn" class="manager-btn">➕ Add Question</button>
+            
+            <div class="editor-actions">
+                <button id="save-set-btn" class="manager-btn save-btn">💾 Save Set</button>
+                <button id="delete-current-set-btn" class="manager-btn delete-btn hidden">🗑️ Delete This Set</button>
+                <button id="cancel-editor-btn" class="manager-btn">Cancel</button>
             </div>
         </div>
         
-        <button id="close-debug-btn" class="lobby-btn">Close</button>
+        <!-- Question Editor Panel -->
+        <div id="question-editor-panel" class="manager-panel hidden">
+            <h3 id="question-editor-title">Add Question</h3>
+            
+            <label>Clinical Prompt:</label>
+            <textarea id="question-prompt-input" placeholder="Describe the patient's symptoms..." rows="4"></textarea>
+            
+            <label>Anatomical Location Description:</label>
+            <textarea id="question-description-input" placeholder="e.g., Left middle cerebral artery territory..." rows="3"></textarea>
+            
+            <h4>Select target location on MRI:</h4>
+            <div class="question-mri-viewer">
+                <img id="question-mri-slice" src="images/slice_013.png" alt="Brain slice">
+                <div id="question-marker" class="debug-marker"></div>
+            </div>
+            
+            <div class="mri-controls">
+                <label>Slice: <span id="question-slice-num">13</span> / 26</label>
+                <input type="range" id="question-slice-slider" min="1" max="26" value="13" class="debug-slider">
+            </div>
+            
+            <div class="question-coords">
+                <p>Coordinates: x=<span id="question-x-display">-</span>, y=<span id="question-y-display">-</span>, slice=<span id="question-slice-display">-</span></p>
+            </div>
+            
+            <div class="editor-actions">
+                <button id="save-question-btn" class="manager-btn save-btn">Save Question</button>
+                <button id="cancel-question-btn" class="manager-btn">Cancel</button>
+            </div>
+        </div>
+        
+        <!-- Delete Set Panel -->
+        <div id="delete-set-panel" class="manager-panel hidden">
+            <h3>Delete Question Set</h3>
+            
+            <label>Select set to delete:</label>
+            <select id="delete-set-select" class="question-set-select">
+                <option value="">Choose a set...</option>
+            </select>
+            
+            <div class="warning-box">
+                ⚠️ Warning: This action cannot be undone!
+            </div>
+            
+            <div class="editor-actions">
+                <button id="confirm-delete-set-btn" class="manager-btn delete-btn">Delete Set</button>
+                <button id="cancel-delete-btn" class="manager-btn">Cancel</button>
+            </div>
+        </div>
+        
+        <!-- Edit Set Selector Panel -->
+        <div id="edit-set-selector-panel" class="manager-panel hidden">
+            <h3>Edit Question Set</h3>
+            
+            <label>Select set to edit:</label>
+            <select id="edit-set-select" class="question-set-select">
+                <option value="">Choose a set...</option>
+            </select>
+            
+            <div class="editor-actions">
+                <button id="confirm-edit-set-btn" class="manager-btn">Edit Set</button>
+                <button id="cancel-edit-select-btn" class="manager-btn">Cancel</button>
+            </div>
+        </div>
+
+        <!-- Loading Overlay -->
+        <div id="manager-loading" class="manager-loading hidden">
+            <div class="spinner"></div>
+            <p>Saving changes...</p>
+        </div>
+        
     </div>
 
     <!-- Firebase SDKs -->
