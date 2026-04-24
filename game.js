@@ -416,7 +416,7 @@ createRoomBtn.addEventListener('click', async () => {
     listenForPlayers();
 
     // Creator also listens for game start
-    listenForGameStart();
+    // listenForGameStart();
 
     // Setup presence tracking (original function)
     setupPresenceTracking();
@@ -735,7 +735,7 @@ function listenForPlayers() {
     });
 }
 
-// Start Game (creator only) - UPDATED to set roundStartTime
+// Start Game (creator only) - UPDATED to start game immediately for host
 startGameBtn.addEventListener('click', async () => {
     if (!isRoomCreator) return;
     
@@ -775,10 +775,18 @@ startGameBtn.addEventListener('click', async () => {
         questionOrder: shuffled,
         timerSeconds: timerValue,
         questionSetId: setId,
-        roundStartTime: firebase.firestore.FieldValue.serverTimestamp()  // ADD THIS
+        roundStartTime: firebase.firestore.FieldValue.serverTimestamp()
     });
     
     console.log('Game started with timer:', timerValue);
+    
+    // Get fresh room data
+    const freshRoomDoc = await roomRef.get();
+    const freshRoomData = freshRoomDoc.data();
+    
+    // Start the game immediately for host
+    hasGameStarted = true;
+    startMultiplayerGame(freshRoomData);
 });
 
 // Creator also needs to listen for their own game start
