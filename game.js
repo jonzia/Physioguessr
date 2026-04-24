@@ -1120,20 +1120,26 @@ async function startMultiplayerGame(roomData) {
     
     console.log('startMultiplayerGame called');
     
-    // STOP HOST PRESENCE UPDATES (game is starting, no longer needed)
+    // STOP HOST PRESENCE for both host and guests
     if (window.hostPresenceInterval) {
         clearInterval(window.hostPresenceInterval);
         window.hostPresenceInterval = null;
-        console.log('Stopped host presence updates - game starting');
+        console.log('Stopped host presence updates');
+    }
+    
+    if (window.hostPresenceChecker) {
+        clearInterval(window.hostPresenceChecker);
+        window.hostPresenceChecker = null;
+        console.log('Stopped host presence checker');
     }
     
     // Hide ALL lobby/waiting panels
+    createRoomPanel.classList.add('hidden');
+    joinRoomPanel.classList.add('hidden');
     const waitingPanel = document.getElementById('waiting-panel');
     if (waitingPanel) {
         waitingPanel.classList.add('hidden');
     }
-    createRoomPanel.classList.add('hidden');
-    joinRoomPanel.classList.add('hidden');
     
     // Check if mobile
     if (isMobile) {
