@@ -3307,7 +3307,6 @@ if (isMobile) {
     mobileLobby.classList.add('hidden');
 }
 
-// Mobile Join Game
 mobileJoinBtn.addEventListener('click', async () => {
     const roomCode = mobileRoomCode.value.trim().toUpperCase();
     const displayName = mobileNameInput.value.trim() || 'Guest';
@@ -3337,6 +3336,14 @@ mobileJoinBtn.addEventListener('click', async () => {
         }
         
         const roomData = roomDoc.data();
+        
+        // Check if room is abandoned
+        if (roomData.status === 'abandoned') {
+            mobileError.textContent = 'This room has been closed';
+            mobileError.classList.remove('hidden');
+            return;
+        }
+        
         if (roomData.status !== 'waiting') {
             mobileError.textContent = 'Game already in progress';
             mobileError.classList.remove('hidden');
@@ -3368,38 +3375,162 @@ mobileJoinBtn.addEventListener('click', async () => {
         
         console.log('Mobile user joined room:', roomCode);
         
-        // Hide lobby, show waiting panel
+        // Hide lobby
         mobileLobby.classList.add('hidden');
+        
+        // Show mobile waiting panel
         const mobileWaitingPanel = document.getElementById('mobile-waiting-panel');
+        if (!mobileWaitingPanel) {
+            console.error('Mobile waiting panel not found!');
+            alert('Error: Waiting screen not available. Please use desktop version.');
+            return;
+        }
+        
         mobileWaitingPanel.classList.remove('hidden');
         
         // Set room code
-        document.getElementById('mobile-waiting-room-code').textContent = roomCode;
+        const mobileWaitingRoomCode = document.getElementById('mobile-waiting-room-code');
+        if (mobileWaitingRoomCode) {
+            mobileWaitingRoomCode.textContent = roomCode;
+        }
         
         // Listen for players
         const mobileWaitingPlayersList = document.getElementById('mobile-waiting-players-list');
-        playersRef.onSnapshot((snapshot) => {
-            mobileWaitingPlayersList.innerHTML = '';
-            snapshot.forEach((doc) => {
-                const player = doc.data();
-                const div = document.createElement('div');
-                div.className = 'mobile-waiting-player';
-                div.textContent = player.name + (player.isCreator ? ' (Host)' : '');
-                mobileWaitingPlayersList.appendChild(div);
+        if (mobileWaitingPlayersList) {
+            playersRef.onSnapshot((snapshot) => {
+                mobileWaitingPlayersList.innerHTML = '';
+                snapshot.forEach((doc) => {
+                    const player = doc.data();
+                    const div = document.createElement('div');
+                    div.className = 'mobile-waiting-player';
+                    div.textContent = player.name + (player.isCreator ? ' (Host)' : '');
+                    mobileWaitingPlayersList.appendChild(div);
+                });
             });
-        });
+        }
+        
+        // Setup guest monitoring if not creator
+        if (!isRoomCreator) {
+            const hostName = roomData.createdBy;
+            
+            const unsubscribeRoom = roomRef.onSnapshot((doc) => {
+                if (!doc.exists) {
+                    alert('Room has been closed by the host');
+                    if (unsubscribeRoom) unsubscribeRoom();
+                    if (window.hostPresenceChecker) clearInterval(window.hostPresenceChecker);
+                    
+                    // Return to mobile lobby
+                    mobileWaitingPanel.classList.add('hidden');
+                    mobileLobby.classList.remove('hidden');
+                    leaveRoom();
+                    return;
+                }
+                
+                const data = doc.data();
+                
+                if (data.status === 'abandoned') {
+                    alert('Room has been closed by the host');
+                    if (unsubscribeRoom) unsubscribeRoom();
+                    if (window.hostPresenceChecker) clearInterval(window.hostPresenceChecker);
+                    
+                    mobileWaitingPanel.classList.add('hidden');
+                    mobileLobby.classList.remove('hidden');
+                    leaveRoom();
+                    return;
+                }
+                
+                if (data.status !== 'waiting') {
+                    if (window.hostPresenceChecker) {
+                        clearInterval(window.hostPresenceChecker);
+                        window.hostPresenceChecker = null;
+                    }
+                    return;
+                }
+            });
+            
+            // Active polling for host presence
+            window.hostPresenceChecker = setInterval(async () => {
+                try {
+                    const roomDoc = await roomRef.get();
+                    
+                    if (!roomDoc.exists) {
+                        clearInterval(window.hostPresenceChecker);
+                        window.hostPresenceChecker = null;
+                        if (unsubscribeRoom) unsubscribeRoom();
+                        alert('Room has been closed');
+                        
+                        mobileWaitingPanel.classList.add('hidden');
+                        mobileLobby.classList.remove('hidden');
+                        leaveRoom();
+                        return;
+                    }
+                    
+                    const data = roomDoc.data();
+                    
+                    if (data.status !== 'waiting') {
+                        clearInterval(window.hostPresenceChecker);
+                        window.hostPresenceChecker = null;
+                        return;
+                    }
+                    
+                    const hostLastSeen = data.hostLastSeen?.toMillis();
+                    const now = Date.now();
+                    
+                    if (hostLastSeen && (now - hostLastSeen) > 10000) {
+                        console.log('Host presence possibly expired - double checking...');
+                        
+                        setTimeout(async () => {
+                            const doubleCheckDoc = await roomRef.get();
+                            if (!doubleCheckDoc.exists) return;
+                            
+                            const doubleCheckData = doubleCheckDoc.data();
+                            const doubleCheckLastSeen = doubleCheckData.hostLastSeen?.toMillis();
+                            const doubleCheckNow = Date.now();
+                            
+                            if (doubleCheckLastSeen && (doubleCheckNow - doubleCheckLastSeen) > 10000) {
+                                console.log('Host presence confirmed expired');
+                                clearInterval(window.hostPresenceChecker);
+                                window.hostPresenceChecker = null;
+                                if (unsubscribeRoom) unsubscribeRoom();
+                                
+                                alert('Host has disconnected. Room is closing.');
+                                
+                                try {
+                                    const playersSnapshot = await playersRef.get();
+                                    await Promise.all(playersSnapshot.docs.map(doc => doc.ref.delete()));
+                                    await roomRef.delete();
+                                } catch (error) {
+                                    console.error('Error cleaning up room:', error);
+                                }
+                                
+                                mobileWaitingPanel.classList.add('hidden');
+                                mobileLobby.classList.remove('hidden');
+                                leaveRoom();
+                            }
+                        }, 2000);
+                    }
+                } catch (error) {
+                    console.error('Host presence check error:', error);
+                }
+            }, 2000);
+            
+            window.currentRoomUnsubscribe = unsubscribeRoom;
+        }
         
         // Listen for game start
         listenForGameStart();
         
         // Add leave button handler
-        document.getElementById('mobile-leave-waiting-btn').addEventListener('click', async () => {
-            if (confirm('Are you sure you want to leave?')) {
-                await leaveRoom();
-                mobileWaitingPanel.classList.add('hidden');
-                mobileLobby.classList.remove('hidden');
-            }
-        });
+        const mobileLeaveBtn = document.getElementById('mobile-leave-waiting-btn');
+        if (mobileLeaveBtn) {
+            mobileLeaveBtn.addEventListener('click', async () => {
+                if (confirm('Are you sure you want to leave?')) {
+                    await leaveRoom();
+                    mobileWaitingPanel.classList.add('hidden');
+                    mobileLobby.classList.remove('hidden');
+                }
+            });
+        }
         
     } catch (error) {
         console.error('Mobile join error:', error);
