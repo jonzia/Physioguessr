@@ -1135,12 +1135,6 @@ async function startMultiplayerGame(roomData) {
         return;
     }
 
-    // Hide waiting panel if it exists
-    const waitingPanel = document.getElementById('waiting-panel');
-    if (waitingPanel) {
-        waitingPanel.classList.add('hidden');
-    }
-
     // Ensure question sets are loaded
     if (!questionSetsData) {
         console.log('Question sets not loaded yet, loading now...');
