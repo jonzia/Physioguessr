@@ -1112,6 +1112,13 @@ function monitorPlayerCount() {
 
 // Start multiplayer game for all players - UPDATED to stop host presence
 async function startMultiplayerGame(roomData) {
+    // Prevent double-starting
+    if (hasGameStarted) {
+        console.log('Game already started, ignoring duplicate call');
+        return;
+    }
+    hasGameStarted = true;
+    
     console.log('startMultiplayerGame called');
     
     // STOP HOST PRESENCE UPDATES (game is starting, no longer needed)
