@@ -356,33 +356,141 @@ startSinglePlayerBtn.addEventListener('click', () => {
     console.log('Single player mode started with set:', selectedQuestionSet);
 });
 
-// Create Room - UPDATED with host presence tracking
+// Start host heartbeat - ONLY for waiting room
+function startHostHeartbeat() {
+    if (!isRoomCreator || !currentRoomCode || !roomRef) return;
+    
+    // Clear any existing heartbeat
+    if (window.hostPresenceInterval) {
+        clearInterval(window.hostPresenceInterval);
+    }
+    
+    console.log('Starting host heartbeat'); // DEBUG
+    
+    window.hostPresenceInterval = setInterval(async () => {
+        if (!currentRoomCode || !isRoomCreator || !roomRef) {
+            clearInterval(window.hostPresenceInterval);
+            window.hostPresenceInterval = null;
+            return;
+        }
+        
+        try {
+            const roomDoc = await roomRef.get();
+            if (!roomDoc.exists || roomDoc.data().status !== 'waiting') {
+                // Room deleted or game started - stop heartbeat
+                console.log('Stopping host heartbeat - room gone or game started'); // DEBUG
+                clearInterval(window.hostPresenceInterval);
+                window.hostPresenceInterval = null;
+                return;
+            }
+            
+            await roomRef.update({
+                hostLastSeen: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            console.log('Host heartbeat sent'); // DEBUG
+        } catch (error) {
+            console.log('Host heartbeat failed:', error);
+            clearInterval(window.hostPresenceInterval);
+            window.hostPresenceInterval = null;
+        }
+    }, 2000);
+}
+
+// Start guest monitoring - ONLY for waiting room
+function startGuestMonitoring() {
+    if (isRoomCreator || !currentRoomCode || !roomRef) return;
+    
+    // Clear any existing checker
+    if (window.hostPresenceChecker) {
+        clearInterval(window.hostPresenceChecker);
+    }
+    
+    console.log('Starting guest monitoring'); // DEBUG
+    
+    window.hostPresenceChecker = setInterval(async () => {
+        try {
+            const roomDoc = await roomRef.get();
+            
+            if (!roomDoc.exists) {
+                clearInterval(window.hostPresenceChecker);
+                window.hostPresenceChecker = null;
+                alert('Room has been closed');
+                leaveRoom();
+                return;
+            }
+            
+            const data = roomDoc.data();
+            
+            // If game started, stop monitoring
+            if (data.status !== 'waiting') {
+                console.log('Stopping guest monitoring - game started'); // DEBUG
+                clearInterval(window.hostPresenceChecker);
+                window.hostPresenceChecker = null;
+                return;
+            }
+            
+            const hostLastSeen = data.hostLastSeen?.toMillis();
+            const now = Date.now();
+            const diff = (now - hostLastSeen) / 1000;
+            
+            console.log('Guest check - host last seen:', diff, 'seconds ago'); // DEBUG
+            
+            if (hostLastSeen && (now - hostLastSeen) > 10000) {
+                console.log('Host might be gone, double checking...'); // DEBUG
+                
+                // Double check
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                
+                const doubleCheck = await roomRef.get();
+                if (!doubleCheck.exists) return;
+                
+                const doubleCheckLastSeen = doubleCheck.data().hostLastSeen?.toMillis();
+                const doubleCheckDiff = (Date.now() - doubleCheckLastSeen) / 1000;
+                
+                console.log('Double check - host last seen:', doubleCheckDiff, 'seconds ago'); // DEBUG
+                
+                if (doubleCheckLastSeen && (Date.now() - doubleCheckLastSeen) > 10000) {
+                    console.log('Host confirmed gone'); // DEBUG
+                    clearInterval(window.hostPresenceChecker);
+                    window.hostPresenceChecker = null;
+                    
+                    alert('Host has disconnected. Room is closing.');
+                    
+                    // Cleanup
+                    const playersSnapshot = await playersRef.get();
+                    await Promise.all(playersSnapshot.docs.map(doc => doc.ref.delete()));
+                    await roomRef.delete();
+                    
+                    leaveRoom();
+                }
+            }
+        } catch (error) {
+            console.error('Guest monitoring error:', error);
+        }
+    }, 3000); // Check every 3 seconds
+}
+
+// Create Room - SIMPLIFIED
 createRoomBtn.addEventListener('click', async () => {
     if (isInWaitingRoom()) {
         alert('Please leave your current room first');
         return;
     }
-    // Check if signed in
     if (!currentUser) {
         alert('Please sign in or play as guest first');
         return;
     }
     
-    // Rate limit check
     if (!checkRateLimit('createRoom', 3, 60000)) {
         alert('Too many rooms created. Please wait a minute.');
         return;
     }
     
-    // Get player name (uses display name input)
     playerName = getPlayerName();
     
-    // Hide other panels
     lobbyMenu.classList.add('hidden');
     joinRoomPanel.classList.add('hidden');
     singlePlayerPanel.classList.add('hidden');
-
-    // Show create room panel
     createRoomPanel.classList.remove('hidden');
     
     const roomCode = generateRoomCode();
@@ -390,7 +498,7 @@ createRoomBtn.addEventListener('click', async () => {
     isRoomCreator = true;
     roomCodeDisplay.textContent = roomCode;
     
-    // Create room in Firebase - UPDATED with hostLastSeen
+    // Create room in Firebase
     roomRef = db.collection('rooms').doc(roomCode);
     await roomRef.set({
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -400,7 +508,7 @@ createRoomBtn.addEventListener('click', async () => {
         status: 'waiting',
         currentRound: 0,
         questionOrder: [],
-        hostLastSeen: firebase.firestore.FieldValue.serverTimestamp()  // ADD THIS
+        hostLastSeen: firebase.firestore.FieldValue.serverTimestamp()
     });
     
     // Add creator to players
@@ -414,31 +522,9 @@ createRoomBtn.addEventListener('click', async () => {
     
     // Listen for players joining
     listenForPlayers();
-
-    // Creator also listens for game start
-    // listenForGameStart();
-
-    // Setup presence tracking (original function)
-    setupPresenceTracking();
     
-    // START HOST PRESENCE UPDATES
-    let hostPresenceInterval = setInterval(async () => {
-        if (currentRoomCode && isRoomCreator && roomRef) {
-            try {
-                await roomRef.update({
-                    hostLastSeen: firebase.firestore.FieldValue.serverTimestamp()
-                });
-            } catch (error) {
-                console.log('Host presence update failed:', error);
-                clearInterval(hostPresenceInterval);
-            }
-        } else {
-            clearInterval(hostPresenceInterval);
-        }
-    }, 2000); // Update every 2 seconds
-    
-    // Store globally for cleanup
-    window.hostPresenceInterval = hostPresenceInterval;
+    // Start host heartbeat
+    startHostHeartbeat();
     
     console.log('Room created:', roomCode);
 });
@@ -551,13 +637,12 @@ joinRoomSubmitBtn.addEventListener('click', async () => {
 
         console.log('Joined successfully, showing waiting panel');
         
-        // Show WAITING panel - same pattern as other panels
+        // Show WAITING panel
         lobbyMenu.classList.add('hidden');
         joinRoomPanel.classList.add('hidden');
         createRoomPanel.classList.add('hidden');
         singlePlayerPanel.classList.add('hidden');
 
-        // Show waiting panel
         const waitingPanel = document.getElementById('waiting-panel');
         waitingPanel.classList.remove('hidden');
 
@@ -577,133 +662,11 @@ joinRoomSubmitBtn.addEventListener('click', async () => {
             });
         });
 
+        // Listen for game start
         listenForGameStart();
-        setupPresenceTracking();
-
-        // Listen for room closure (guest only) - UPDATED with active polling
-        if (!isRoomCreator) {
-            const hostName = roomData.createdBy;
-            
-            // Snapshot listener for room deletion/abandonment
-            const unsubscribeRoom = roomRef.onSnapshot((doc) => {
-                if (!doc.exists) {
-                    // Room was deleted
-                    console.log('Room deleted');
-                    alert('Room has been closed by the host');
-                    if (unsubscribeRoom) unsubscribeRoom();
-                    if (window.hostPresenceChecker) clearInterval(window.hostPresenceChecker);
-                    leaveRoom();
-                    return;
-                }
-                
-                const data = doc.data();
-                
-                if (data.status === 'abandoned') {
-                    // Room was marked abandoned
-                    console.log('Room abandoned');
-                    alert('Room has been closed by the host');
-                    if (unsubscribeRoom) unsubscribeRoom();
-                    if (window.hostPresenceChecker) clearInterval(window.hostPresenceChecker);
-                    leaveRoom();
-                    return;
-                }
-                
-                // If game started, stop checking host presence
-                if (data.status !== 'waiting') {
-                    if (window.hostPresenceChecker) {
-                        clearInterval(window.hostPresenceChecker);
-                        window.hostPresenceChecker = null;
-                    }
-                    return;
-                }
-            });
-            
-            // Active polling to check host presence
-            window.hostPresenceChecker = setInterval(async () => {
-                try {
-                    const roomDoc = await roomRef.get();
-                    
-                    if (!roomDoc.exists) {
-                        console.log('Room no longer exists');
-                        clearInterval(window.hostPresenceChecker);
-                        window.hostPresenceChecker = null;
-                        if (unsubscribeRoom) unsubscribeRoom();
-                        alert('Room has been closed');
-                        leaveRoom();
-                        return;
-                    }
-                    
-                    const data = roomDoc.data();
-                    
-                    // Only check during waiting phase
-                    if (data.status !== 'waiting') {
-                        clearInterval(window.hostPresenceChecker);
-                        window.hostPresenceChecker = null;
-                        return;
-                    }
-                    
-                    // Check host's last seen time
-                    const hostLastSeen = data.hostLastSeen?.toMillis();
-                    const now = Date.now();
-                    
-                    console.log('Checking host presence:', {
-                        hostLastSeen: new Date(hostLastSeen),
-                        now: new Date(now),
-                        diff: (now - hostLastSeen) / 1000
-                    });
-                    
-                    if (hostLastSeen && (now - hostLastSeen) > 10000) {  // Changed from 6000 to 10000
-                        // Host hasn't updated in 10 seconds - double check before closing
-                        console.log('Host presence possibly expired - double checking...');
-                        
-                        // Wait 2 seconds and check again
-                        setTimeout(async () => {
-                            const doubleCheckDoc = await roomRef.get();
-                            if (!doubleCheckDoc.exists) return;
-                            
-                            const doubleCheckData = doubleCheckDoc.data();
-                            const doubleCheckLastSeen = doubleCheckData.hostLastSeen?.toMillis();
-                            const doubleCheckNow = Date.now();
-                            
-                            console.log('Double check:', {
-                                hostLastSeen: new Date(doubleCheckLastSeen),
-                                now: new Date(doubleCheckNow),
-                                diff: (doubleCheckNow - doubleCheckLastSeen) / 1000
-                            });
-                            
-                            if (doubleCheckLastSeen && (doubleCheckNow - doubleCheckLastSeen) > 10000) {
-                                // Still expired after double check - host is truly gone
-                                console.log('Host presence confirmed expired - cleaning up room');
-                                clearInterval(window.hostPresenceChecker);
-                                window.hostPresenceChecker = null;
-                                if (unsubscribeRoom) unsubscribeRoom();
-                                
-                                alert('Host has disconnected. Room is closing.');
-                                
-                                // Clean up room completely
-                                try {
-                                    const playersSnapshot = await playersRef.get();
-                                    await Promise.all(playersSnapshot.docs.map(doc => doc.ref.delete()));
-                                    await roomRef.delete();
-                                    console.log('Room completely cleaned up after host disconnect');
-                                } catch (error) {
-                                    console.error('Error cleaning up room:', error);
-                                }
-                                
-                                leaveRoom();
-                            } else {
-                                console.log('False alarm - host is still present');
-                            }
-                        }, 2000);
-                    }
-                } catch (error) {
-                    console.error('Host presence check error:', error);
-                }
-            }, 2000); // Check every 2 seconds
-            
-            // Store unsubscribe function for cleanup
-            window.currentRoomUnsubscribe = unsubscribeRoom;
-        }
+        
+        // Start guest monitoring
+        startGuestMonitoring();
 
         hideLobbyLoading();
 
@@ -1120,20 +1083,18 @@ async function startMultiplayerGame(roomData) {
     
     console.log('startMultiplayerGame called');
     
-    // STOP HOST PRESENCE for both host and guests
+    // STOP ALL WAITING ROOM MONITORING
     if (window.hostPresenceInterval) {
         clearInterval(window.hostPresenceInterval);
         window.hostPresenceInterval = null;
-        console.log('Stopped host presence updates');
     }
     
     if (window.hostPresenceChecker) {
         clearInterval(window.hostPresenceChecker);
         window.hostPresenceChecker = null;
-        console.log('Stopped host presence checker');
     }
     
-    // Hide ALL lobby/waiting panels
+    // Hide ALL panels
     createRoomPanel.classList.add('hidden');
     joinRoomPanel.classList.add('hidden');
     const waitingPanel = document.getElementById('waiting-panel');
@@ -3038,22 +2999,11 @@ function listenForMatchmaking() {
             if (playerDoc.exists) {
                 isRoomCreator = playerDoc.data().isCreator || false;
                 
-                // If we're the creator, start host presence updates
+                // Start appropriate monitoring
                 if (isRoomCreator) {
-                    window.hostPresenceInterval = setInterval(async () => {
-                        if (currentRoomCode && isRoomCreator && roomRef) {
-                            try {
-                                await roomRef.update({
-                                    hostLastSeen: firebase.firestore.FieldValue.serverTimestamp()
-                                });
-                            } catch (error) {
-                                console.log('Host presence update failed:', error);
-                                clearInterval(window.hostPresenceInterval);
-                            }
-                        } else {
-                            clearInterval(window.hostPresenceInterval);
-                        }
-                    }, 2000);
+                    startHostHeartbeat();
+                } else {
+                    startGuestMonitoring();
                 }
             }
             
@@ -3553,6 +3503,9 @@ mobileJoinBtn.addEventListener('click', async () => {
         
         // Listen for game start
         listenForGameStart();
+        
+        // Start guest monitoring
+        startGuestMonitoring();
         
         // Add leave button handler
         const mobileLeaveBtn = document.getElementById('mobile-leave-waiting-btn');
