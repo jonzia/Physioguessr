@@ -2998,12 +2998,6 @@ function listenForMatchmaking() {
             currentRoomCode = data.roomCode;
             roomRef = db.collection('rooms').doc(currentRoomCode);
             playersRef = roomRef.collection('players');
-            
-            // Check if we're the creator
-            const playerDoc = await playersRef.doc(playerName).get();
-            if (playerDoc.exists) {
-                isRoomCreator = playerDoc.data().isCreator || false;
-            }
 
             // Check if we're the creator
             const playerDoc = await playersRef.doc(playerName).get();
