@@ -5,6 +5,27 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+    <!-- Mobile Lobby (shown only on mobile) -->
+    <div id="mobile-lobby" class="mobile-lobby hidden">
+        <div class="mobile-lobby-container">
+            <h1>Physioguessr</h1>
+            
+            <div class="mobile-name-input">
+                <label>Your Display Name (Optional):</label>
+                <input type="text" id="mobile-name-input" placeholder="Enter name">
+            </div>
+            
+            <div class="mobile-room-input">
+                <label>Room Code:</label>
+                <input type="text" id="mobile-room-code" placeholder="Enter 6-digit code" maxlength="6">
+            </div>
+            
+            <button id="mobile-join-btn" class="mobile-btn">Join Game</button>
+            
+            <p id="mobile-error" class="mobile-error hidden">Could not join room</p>
+        </div>
+    </div>
+
     <!-- Lobby Screen -->
     <div id="lobby-screen" class="lobby-screen">
         <div class="lobby-container">
@@ -65,7 +86,6 @@
             <!-- Create Room Panel -->
             <div id="create-room-panel" class="lobby-panel hidden">
                 <h2>Create Room</h2>
-                
                 <div class="room-settings">
                     <label>Round Timer (seconds):</label>
                     <input type="number" id="timer-setting" value="30" min="15" max="120">
@@ -75,7 +95,6 @@
                         <option value="default">Default Question Set</option>
                     </select>
                 </div>
-                
                 <div class="room-code-display">
                     <p>Room Code:</p>
                     <h2 id="room-code-display"></h2>
@@ -85,6 +104,8 @@
                     <h3>Players in Lobby:</h3>
                     <ul id="players-list"></ul>
                 </div>
+                
+                <button id="close-room-btn" class="lobby-btn cancel-btn">Close Room</button>
             </div>
             
             <!-- Join Room Panel -->
@@ -94,6 +115,24 @@
                 <button id="join-room-submit-btn" class="lobby-btn">Join</button>
                 <p id="join-error" class="error-message hidden">Room not found</p>
             </div>
+
+            <div id="waiting-panel" class="lobby-panel hidden">
+            <h2>Waiting for Game</h2>
+            
+            <div class="room-code-display">
+                <p>Room Code:</p>
+                <h2 id="waiting-room-code"></h2>
+            </div>
+            
+            <div id="waiting-players">
+                <h3>Players in Lobby:</h3>
+                <ul id="waiting-players-list"></ul>
+            </div>
+            
+            <p class="waiting-message">Waiting for host to start the game...</p>
+            
+            <button id="leave-waiting-btn" class="lobby-btn cancel-btn">Leave Room</button>
+        </div>
 
             <!-- Matchmaking Panel -->
             <div id="matchmaking-panel" class="lobby-panel hidden">
@@ -105,6 +144,12 @@
                 <p class="queue-info">Players in queue: <span id="queue-count">1</span></p>
                 <button id="cancel-matchmaking-btn" class="lobby-btn cancel-btn">Cancel</button>
             </div>
+        </div>
+
+        <!-- Lobby Loading Overlay -->
+        <div id="lobby-loading" class="lobby-loading hidden">
+            <div class="spinner"></div>
+            <p>Joining room...</p>
         </div>
     </div>
 
@@ -150,6 +195,55 @@
                     <div class="scroll-hint">Scroll to navigate through brain slices</div>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- Mobile Game Container -->
+    <div class="mobile-game-container hidden">
+        <div class="mobile-header">
+            <div class="mobile-round">Round <span id="mobile-round">1</span>/5</div>
+            <div class="mobile-timer">
+                <span id="mobile-timer-value">30</span>s
+            </div>
+        </div>
+        
+        <div class="mobile-brain-viewer">
+            <img id="mobile-brain-slice" src="images/slice_013.png" alt="Brain MRI">
+            <div id="mobile-marker" class="mobile-marker"></div>
+        </div>
+        
+        <div class="mobile-slice-control">
+            <input type="range" id="mobile-slice-slider" min="1" max="26" value="13" class="mobile-slider">
+            <span class="mobile-slice-label">Slice: <span id="mobile-slice-num">13</span> / 26</span>
+        </div>
+        
+        <div class="mobile-actions">
+            <button id="mobile-submit-btn" class="mobile-btn">Submit Guess</button>
+            <button id="mobile-exit-btn" class="mobile-btn mobile-exit-btn">Exit Game</button>
+        </div>
+    </div>
+
+    <!-- Mobile Results Modal -->
+    <div id="mobile-results-overlay" class="overlay hidden"></div>
+    <div id="mobile-results-modal" class="mobile-results-modal hidden">
+        <h2>Round <span id="mobile-results-round">1</span></h2>
+        
+        <div class="mobile-results-score">
+            <div class="score-label">Your Score</div>
+            <div class="score-big" id="mobile-score-value">0</div>
+        </div>
+        
+        <div class="mobile-leaderboard">
+            <h3>Leaderboard</h3>
+            <div id="mobile-leaderboard-list"></div>
+        </div>
+        
+        <div class="mobile-results-actions">
+            <button id="mobile-continue-btn" class="mobile-btn">Continue</button>
+            <button id="mobile-exit-results-btn" class="mobile-btn mobile-exit-btn">Exit Game</button>
+            <p id="mobile-waiting-msg" class="mobile-waiting hidden">
+                Waiting... (<span id="mobile-waiting-timer">15</span>s)
+            </p>
         </div>
     </div>
     

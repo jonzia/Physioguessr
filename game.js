@@ -31,6 +31,8 @@ const singlePlayerSetSelect = document.getElementById('single-player-set-select'
 const singlePlayerPanel = document.getElementById('single-player-panel');
 const startSinglePlayerBtn = document.getElementById('start-single-player-btn');
 const backFromSingleBtn = document.getElementById('back-from-single-btn');
+const lobbyLoading = document.getElementById('lobby-loading');
+const leaveWaitingBtn = document.getElementById('leave-waiting-btn');
 
 // Lobby menu buttons
 const lobbyMenu = document.querySelector('.lobby-menu');
@@ -55,6 +57,102 @@ let hasGameStarted = false;
 let lastPlayerCount = 0;
 let questionSetsData = null;
 let selectedQuestionSet = 'default';
+let playerCountListener = null;
+let monitoringActive = false;
+
+// Centralized leave room function - UPDATED with all cleanup including mobile
+async function leaveRoom() {
+    // Stop host presence updates
+    if (window.hostPresenceInterval) {
+        clearInterval(window.hostPresenceInterval);
+        window.hostPresenceInterval = null;
+    }
+    
+    // Stop host presence checker (guest side)
+    if (window.hostPresenceChecker) {
+        clearInterval(window.hostPresenceChecker);
+        window.hostPresenceChecker = null;
+    }
+    
+    // Stop desktop timer
+    if (roundTimer) {
+        clearInterval(roundTimer);
+        roundTimer = null;
+    }
+    
+    // Stop mobile timer
+    if (mobileTimer) {
+        clearInterval(mobileTimer);
+        mobileTimer = null;
+    }
+    
+    // Unsubscribe from desktop timer listener
+    if (window.timerUnsubscribe) {
+        window.timerUnsubscribe();
+        window.timerUnsubscribe = null;
+    }
+    
+    // Unsubscribe from mobile timer listener
+    if (window.mobileTimerUnsubscribe) {
+        window.mobileTimerUnsubscribe();
+        window.mobileTimerUnsubscribe = null;
+    }
+    
+    // Unsubscribe from room monitoring
+    if (window.currentRoomUnsubscribe) {
+        window.currentRoomUnsubscribe();
+        window.currentRoomUnsubscribe = null;
+    }
+    
+    if (currentRoomCode && playerName && playersRef) {
+        try {
+            // Just remove player from room
+            await playersRef.doc(playerName).delete();
+            console.log('Player removed from room');
+            
+            // DON'T mark as abandoned - let presence tracking handle it
+            
+        } catch (error) {
+            console.error('Error leaving room:', error);
+        }
+    }
+    
+    // Reset state
+    currentRoomCode = null;
+    roomRef = null;
+    playersRef = null;
+    isRoomCreator = false;
+    
+    // Hide panels and show lobby menu
+    const waitingPanel = document.getElementById('waiting-panel');
+    waitingPanel.classList.add('hidden');
+    createRoomPanel.classList.add('hidden');
+    joinRoomPanel.classList.add('hidden');
+    singlePlayerPanel.classList.add('hidden');
+    lobbyMenu.classList.remove('hidden');
+}
+
+function showLobbyLoading(message = 'Loading...') {
+    console.log('showLobbyLoading called:', message);
+    if (lobbyLoading) {
+        lobbyLoading.querySelector('p').textContent = message;
+        lobbyLoading.classList.remove('hidden');
+        console.log('Loading overlay shown');
+    }
+}
+
+function hideLobbyLoading() {
+    console.log('hideLobbyLoading called');
+    if (lobbyLoading) {
+        lobbyLoading.classList.add('hidden');
+        console.log('Loading overlay hidden');
+    }
+}
+
+// Helper function to check if player is in a waiting room
+function isInWaitingRoom() {
+    return currentRoomCode !== null && !document.getElementById('waiting-panel').classList.contains('hidden');
+}
 
 // Track player presence in Firebase
 function setupPresenceTracking() {
@@ -97,17 +195,28 @@ async function handlePlayerDisconnect() {
     if (!currentRoomCode || !playerName || !playersRef) return;
     
     try {
-        // Remove player from room
-        await playersRef.doc(playerName).delete();
-        console.log('Player removed from room');
-        
-        // If creator left during lobby, mark room as abandoned
+        // If creator left during waiting phase, mark room as abandoned AND delete it
         if (isRoomCreator && roomRef) {
             const roomDoc = await roomRef.get();
             if (roomDoc.exists && roomDoc.data().status === 'waiting') {
-                await roomRef.update({ status: 'abandoned' });
+                console.log('Host left waiting room, closing room');
+                
+                // Delete all players first
+                const playersSnapshot = await playersRef.get();
+                const deletePromises = playersSnapshot.docs.map(doc => doc.ref.delete());
+                await Promise.all(deletePromises);
+                
+                // Delete the room
+                await roomRef.delete();
+                console.log('Room deleted');
+                return; // Don't continue to remove player individually
             }
         }
+        
+        // Remove player from room (non-host or mid-game)
+        await playersRef.doc(playerName).delete();
+        console.log('Player removed from room');
+        
     } catch (error) {
         console.log('Disconnect cleanup error:', error);
     }
@@ -177,20 +286,30 @@ function generateRoomCode() {
 }
 
 singlePlayerBtn.addEventListener('click', () => {
+    if (isInWaitingRoom()) {
+        alert('Please leave your current room first');
+        return;
+    }
     // Check if signed in
     if (!currentUser) {
         alert('Please sign in or play as guest first');
         return;
     }
     
-    // Show single player panel
+    // Hide other panels
     lobbyMenu.classList.add('hidden');
+    createRoomPanel.classList.add('hidden');
+    joinRoomPanel.classList.add('hidden');
+    
+    // Show single player panel
     singlePlayerPanel.classList.remove('hidden');
 });
 
-// Back button
+// Back button from single player
 backFromSingleBtn.addEventListener('click', () => {
     singlePlayerPanel.classList.add('hidden');
+    createRoomPanel.classList.add('hidden');
+    joinRoomPanel.classList.add('hidden');
     lobbyMenu.classList.remove('hidden');
 });
 
@@ -200,8 +319,8 @@ startSinglePlayerBtn.addEventListener('click', () => {
     selectedQuestionSet = singlePlayerSetSelect.value;
     const questions = getQuestionsFromSet(selectedQuestionSet);
     
-    if (questions.length < 5) {
-        alert('Not enough questions in this set (need at least 5)');
+    if (questions.length < 1) {
+        alert('Not enough questions in this set (need at least 1)');
         return;
     }
     
@@ -237,8 +356,12 @@ startSinglePlayerBtn.addEventListener('click', () => {
     console.log('Single player mode started with set:', selectedQuestionSet);
 });
 
-// Create Room
+// Create Room - UPDATED with host presence tracking
 createRoomBtn.addEventListener('click', async () => {
+    if (isInWaitingRoom()) {
+        alert('Please leave your current room first');
+        return;
+    }
     // Check if signed in
     if (!currentUser) {
         alert('Please sign in or play as guest first');
@@ -251,10 +374,15 @@ createRoomBtn.addEventListener('click', async () => {
         return;
     }
     
-    // Get player name from auth
-    playerName = currentUser.displayName || `Player-${currentUser.uid.substr(0, 6)}`;
+    // Get player name (uses display name input)
+    playerName = getPlayerName();
     
+    // Hide other panels
     lobbyMenu.classList.add('hidden');
+    joinRoomPanel.classList.add('hidden');
+    singlePlayerPanel.classList.add('hidden');
+
+    // Show create room panel
     createRoomPanel.classList.remove('hidden');
     
     const roomCode = generateRoomCode();
@@ -262,16 +390,17 @@ createRoomBtn.addEventListener('click', async () => {
     isRoomCreator = true;
     roomCodeDisplay.textContent = roomCode;
     
-    // Create room in Firebase
+    // Create room in Firebase - UPDATED with hostLastSeen
     roomRef = db.collection('rooms').doc(roomCode);
     await roomRef.set({
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         createdBy: playerName,
         timerSeconds: parseInt(timerSetting.value),
-        questionSetId: questionSetSelect.value,  // ADD THIS
+        questionSetId: questionSetSelect.value,
         status: 'waiting',
         currentRound: 0,
-        questionOrder: []
+        questionOrder: [],
+        hostLastSeen: firebase.firestore.FieldValue.serverTimestamp()  // ADD THIS
     });
     
     // Add creator to players
@@ -289,19 +418,54 @@ createRoomBtn.addEventListener('click', async () => {
     // Creator also listens for game start
     listenForGameStart();
 
-    // Setup presence tracking
+    // Setup presence tracking (original function)
     setupPresenceTracking();
+    
+    // START HOST PRESENCE UPDATES
+    let hostPresenceInterval = setInterval(async () => {
+        if (currentRoomCode && isRoomCreator && roomRef) {
+            try {
+                await roomRef.update({
+                    hostLastSeen: firebase.firestore.FieldValue.serverTimestamp()
+                });
+            } catch (error) {
+                console.log('Host presence update failed:', error);
+                clearInterval(hostPresenceInterval);
+            }
+        } else {
+            clearInterval(hostPresenceInterval);
+        }
+    }, 2000); // Update every 2 seconds
+    
+    // Store globally for cleanup
+    window.hostPresenceInterval = hostPresenceInterval;
     
     console.log('Room created:', roomCode);
 });
 
 // Join Room
 joinRoomBtn.addEventListener('click', () => {
+    if (isInWaitingRoom()) {
+        alert('Please leave your current room first');
+        return;
+    }
+    // Check if signed in
+    if (!currentUser) {
+        alert('Please sign in or play as guest first');
+        return;
+    }
+    
+    // Hide other panels
     lobbyMenu.classList.add('hidden');
+    createRoomPanel.classList.add('hidden');
+    singlePlayerPanel.classList.add('hidden');
+    
+    // Show join room panel
     joinRoomPanel.classList.remove('hidden');
 });
 
 joinRoomSubmitBtn.addEventListener('click', async () => {
+    console.log('Join room clicked');
     // Check if signed in
     if (!currentUser) {
         alert('Please sign in or play as guest first');
@@ -315,71 +479,223 @@ joinRoomSubmitBtn.addEventListener('click', async () => {
 
     const roomCode = roomCodeInput.value.trim().toUpperCase();
     if (!roomCode) return;
+
+    console.log('Checking room:', roomCode);
     
     // Get player name
     playerName = getPlayerName();
     
     joinError.classList.add('hidden');
+    showLobbyLoading('Joining room...');  // ADD THIS
     
-    // Check if room exists
-    roomRef = db.collection('rooms').doc(roomCode);
-    const roomDoc = await roomRef.get();
-    
-    if (!roomDoc.exists) {
-        joinError.classList.remove('hidden');
-        joinError.textContent = 'Room not found';
-        return;
-    }
-    
-    const roomData = roomDoc.data();
-    if (roomData.status !== 'waiting') {
-        joinError.textContent = 'Game already in progress';
-        joinError.classList.remove('hidden');
-        return;
-    }
-    
-    // Check player count
-    playersRef = roomRef.collection('players');
-    const playersSnapshot = await playersRef.get();
-    if (playersSnapshot.size >= 10) {
-        joinError.textContent = 'Room is full';
-        joinError.classList.remove('hidden');
-        return;
-    }
-    
-    // Check if name is already taken in this room
-    const existingPlayer = playersSnapshot.docs.find(doc => doc.id === playerName);
-    if (existingPlayer) {
-        joinError.textContent = 'Name already taken in this room';
-        joinError.classList.remove('hidden');
-        return;
-    }
-    
-    // Join room
-    currentRoomCode = roomCode;
-    isRoomCreator = false;
-    
-    await playersRef.doc(playerName).set({
-        name: playerName,
-        joinedAt: firebase.firestore.FieldValue.serverTimestamp(),
-        isCreator: false,
-        score: 0
-    });
-    
-    // Show waiting screen
-    joinRoomPanel.classList.add('hidden');
-    createRoomPanel.classList.remove('hidden');
-    roomCodeDisplay.textContent = roomCode;
-    startGameBtn.style.display = 'none';
-    document.querySelector('.room-settings').style.display = 'none';
-    
-    listenForPlayers();
-    listenForGameStart();
+    try {  // WRAP IN TRY-CATCH
+        // Check if room exists
+        roomRef = db.collection('rooms').doc(roomCode);
+        const roomDoc = await roomRef.get();
+        
+        if (!roomDoc.exists) {
+            joinError.classList.remove('hidden');
+            joinError.textContent = 'Room not found';
+            hideLobbyLoading();  // ADD THIS
+            return;
+        }
+        
+        const roomData = roomDoc.data();
 
-    // Setup presence tracking
-    setupPresenceTracking();
-    
-    console.log('Joined room:', roomCode);
+        // Check if room is abandoned
+        if (roomData.status === 'abandoned') {
+            joinError.textContent = 'This room has been closed';
+            joinError.classList.remove('hidden');
+            hideLobbyLoading();
+            return;
+        }
+
+        if (roomData.status !== 'waiting') {
+            joinError.textContent = 'Game already in progress';
+            joinError.classList.remove('hidden');
+            hideLobbyLoading();
+            return;
+        }
+        
+        // Check player count
+        playersRef = roomRef.collection('players');
+        const playersSnapshot = await playersRef.get();
+        if (playersSnapshot.size >= 10) {
+            joinError.textContent = 'Room is full';
+            joinError.classList.remove('hidden');
+            hideLobbyLoading();  // ADD THIS
+            return;
+        }
+        
+        // Check if name is already taken in this room
+        const existingPlayer = playersSnapshot.docs.find(doc => doc.id === playerName);
+        if (existingPlayer) {
+            joinError.textContent = 'Name already taken in this room';
+            joinError.classList.remove('hidden');
+            hideLobbyLoading();  // ADD THIS
+            return;
+        }
+        
+        console.log('Room validated, joining...');
+
+        // Join room
+        currentRoomCode = roomCode;
+        isRoomCreator = false;
+        
+        await playersRef.doc(playerName).set({
+            name: playerName,
+            joinedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            isCreator: false,
+            score: 0
+        });
+
+        console.log('Joined successfully, showing waiting panel');
+        
+        // Show WAITING panel - same pattern as other panels
+        lobbyMenu.classList.add('hidden');
+        joinRoomPanel.classList.add('hidden');
+        createRoomPanel.classList.add('hidden');
+        singlePlayerPanel.classList.add('hidden');
+
+        // Show waiting panel
+        const waitingPanel = document.getElementById('waiting-panel');
+        waitingPanel.classList.remove('hidden');
+
+        // Set room code
+        const waitingRoomCode = document.getElementById('waiting-room-code');
+        waitingRoomCode.textContent = roomCode;
+
+        // Listen for players
+        const waitingPlayersList = document.getElementById('waiting-players-list');
+        playersRef.onSnapshot((snapshot) => {
+            waitingPlayersList.innerHTML = '';
+            snapshot.forEach((doc) => {
+                const player = doc.data();
+                const li = document.createElement('li');
+                li.textContent = player.name + (player.isCreator ? ' (Host)' : '');
+                waitingPlayersList.appendChild(li);
+            });
+        });
+
+        listenForGameStart();
+        setupPresenceTracking();
+
+        // Listen for room closure (guest only) - UPDATED with active polling
+        if (!isRoomCreator) {
+            const hostName = roomData.createdBy;
+            
+            // Snapshot listener for room deletion/abandonment
+            const unsubscribeRoom = roomRef.onSnapshot((doc) => {
+                if (!doc.exists) {
+                    // Room was deleted
+                    console.log('Room deleted');
+                    alert('Room has been closed by the host');
+                    if (unsubscribeRoom) unsubscribeRoom();
+                    if (window.hostPresenceChecker) clearInterval(window.hostPresenceChecker);
+                    leaveRoom();
+                    return;
+                }
+                
+                const data = doc.data();
+                
+                if (data.status === 'abandoned') {
+                    // Room was marked abandoned
+                    console.log('Room abandoned');
+                    alert('Room has been closed by the host');
+                    if (unsubscribeRoom) unsubscribeRoom();
+                    if (window.hostPresenceChecker) clearInterval(window.hostPresenceChecker);
+                    leaveRoom();
+                    return;
+                }
+                
+                // If game started, stop checking host presence
+                if (data.status !== 'waiting') {
+                    if (window.hostPresenceChecker) {
+                        clearInterval(window.hostPresenceChecker);
+                        window.hostPresenceChecker = null;
+                    }
+                    return;
+                }
+            });
+            
+            // Active polling to check host presence
+            window.hostPresenceChecker = setInterval(async () => {
+                try {
+                    const roomDoc = await roomRef.get();
+                    
+                    if (!roomDoc.exists) {
+                        console.log('Room no longer exists');
+                        clearInterval(window.hostPresenceChecker);
+                        window.hostPresenceChecker = null;
+                        if (unsubscribeRoom) unsubscribeRoom();
+                        alert('Room has been closed');
+                        leaveRoom();
+                        return;
+                    }
+                    
+                    const data = roomDoc.data();
+                    
+                    // Only check during waiting phase
+                    if (data.status !== 'waiting') {
+                        clearInterval(window.hostPresenceChecker);
+                        window.hostPresenceChecker = null;
+                        return;
+                    }
+                    
+                    // Check host's last seen time
+                    const hostLastSeen = data.hostLastSeen?.toMillis();
+                    const now = Date.now();
+                    
+                    console.log('Checking host presence:', {
+                        hostLastSeen: new Date(hostLastSeen),
+                        now: new Date(now),
+                        diff: (now - hostLastSeen) / 1000
+                    });
+                    
+                    if (hostLastSeen && (now - hostLastSeen) > 6000) {
+                        // Host hasn't updated in 6 seconds - they're gone
+                        console.log('Host presence expired - cleaning up room');
+                        clearInterval(window.hostPresenceChecker);
+                        window.hostPresenceChecker = null;
+                        if (unsubscribeRoom) unsubscribeRoom();
+                        
+                        alert('Host has disconnected. Room is closing.');
+                        
+                        // Clean up room completely
+                        try {
+                            // Delete all players
+                            const playersSnapshot = await playersRef.get();
+                            await Promise.all(playersSnapshot.docs.map(doc => doc.ref.delete()));
+                            
+                            // Delete the room itself
+                            await roomRef.delete();
+                            console.log('Room completely cleaned up after host disconnect');
+                        } catch (error) {
+                            console.error('Error cleaning up room:', error);
+                        }
+                        
+                        // Return to lobby
+                        leaveRoom();
+                    }
+                } catch (error) {
+                    console.error('Host presence check error:', error);
+                }
+            }, 2000); // Check every 2 seconds
+            
+            // Store unsubscribe function for cleanup
+            window.currentRoomUnsubscribe = unsubscribeRoom;
+        }
+
+        hideLobbyLoading();
+
+        console.log('Joined room:', roomCode);
+        
+    } catch (error) {  // ADD CATCH BLOCK
+        console.error('Join error:', error);
+        joinError.textContent = 'Error joining room';
+        joinError.classList.remove('hidden');
+        hideLobbyLoading();
+    }
 });
 
 // Listen for players in room
@@ -400,9 +716,28 @@ function listenForPlayers() {
     });
 }
 
-// Start Game (creator only)
+// Start Game (creator only) - UPDATED to set roundStartTime
 startGameBtn.addEventListener('click', async () => {
     if (!isRoomCreator) return;
+    
+    // Get latest player name in case they edited it
+    const latestPlayerName = getPlayerName();
+    
+    // If name changed, update it in Firebase
+    if (latestPlayerName !== playerName) {
+        // Delete old player entry
+        await playersRef.doc(playerName).delete();
+        
+        // Create new entry with updated name
+        await playersRef.doc(latestPlayerName).set({
+            name: latestPlayerName,
+            joinedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            isCreator: true,
+            score: 0
+        });
+        
+        playerName = latestPlayerName;
+    }
     
     const timerValue = parseInt(timerSetting.value);
     const setId = questionSetSelect.value;
@@ -414,13 +749,14 @@ startGameBtn.addEventListener('click', async () => {
     const questionIds = questions.map(q => q.id);
     const shuffled = questionIds.sort(() => Math.random() - 0.5).slice(0, 5);
     
+    // UPDATED: Set roundStartTime when starting game
     await roomRef.update({
         status: 'playing',
         currentRound: 1,
         questionOrder: shuffled,
         timerSeconds: timerValue,
-        questionSetId: setId,  // ADD THIS
-        roundStartTime: firebase.firestore.FieldValue.serverTimestamp()
+        questionSetId: setId,
+        roundStartTime: firebase.firestore.FieldValue.serverTimestamp()  // ADD THIS
     });
     
     console.log('Game started with timer:', timerValue);
@@ -433,6 +769,12 @@ if (isRoomCreator) {
 
 function listenForGameStart() {
     roomRef.onSnapshot((doc) => {
+        // Check if room still exists
+        if (!doc.exists) {
+            console.log('Room no longer exists');
+            return;
+        }
+        
         const roomData = doc.data();
         console.log('Room status changed:', roomData.status);
         
@@ -443,34 +785,73 @@ function listenForGameStart() {
     });
 }
 
-// Start round timer
+// Leave waiting room button
+leaveWaitingBtn.addEventListener('click', async () => {
+    if (confirm('Are you sure you want to leave this room?')) {
+        await leaveRoom();
+    }
+});
+
+// Start round timer - UPDATED to use server time
 function startRoundTimer(seconds) {
-    timeRemaining = seconds;
+    // Clear any existing timer
+    if (roundTimer) clearInterval(roundTimer);
+    
     timerDisplay.classList.remove('hidden', 'warning');
     
     // Reset timer text format
-    timerDisplay.innerHTML = `Time: <span id="timer-value">${timeRemaining}</span>s`;
+    timerDisplay.innerHTML = `Time: <span id="timer-value">${seconds}</span>s`;
     
     // Re-get the element since we changed innerHTML
     const timerValueSpan = document.getElementById('timer-value');
     
-    if (roundTimer) clearInterval(roundTimer);
-    
-    roundTimer = setInterval(() => {
-        timeRemaining--;
-        timerValueSpan.textContent = timeRemaining;
-        
-        // Warning animation at 10 seconds
-        if (timeRemaining <= 10) {
-            timerDisplay.classList.add('warning');
-        }
-        
-        // Time's up
-        if (timeRemaining <= 0) {
+    // Listen to room for server timestamp
+    const timerUnsubscribe = roomRef.onSnapshot((doc) => {
+        if (!doc.exists) {
             clearInterval(roundTimer);
-            autoSubmitRound();
+            if (timerUnsubscribe) timerUnsubscribe();
+            return;
         }
-    }, 1000);
+        
+        const data = doc.data();
+        const roundStartTime = data.roundStartTime?.toMillis();
+        const roundDuration = data.timerSeconds || seconds;
+        
+        if (!roundStartTime) return;
+        
+        // Clear any existing interval before starting new one
+        if (roundTimer) clearInterval(roundTimer);
+        
+        // Calculate time remaining based on server time
+        const updateTimer = () => {
+            const now = Date.now();
+            const elapsed = (now - roundStartTime) / 1000; // seconds elapsed
+            timeRemaining = Math.max(0, Math.ceil(roundDuration - elapsed));
+            
+            timerValueSpan.textContent = timeRemaining;
+            
+            // Warning animation at 10 seconds
+            if (timeRemaining <= 10) {
+                timerDisplay.classList.add('warning');
+            }
+            
+            // Time's up
+            if (timeRemaining <= 0) {
+                clearInterval(roundTimer);
+                if (timerUnsubscribe) timerUnsubscribe();
+                autoSubmitRound();
+            }
+        };
+        
+        // Update immediately
+        updateTimer();
+        
+        // Then update every 100ms for smooth countdown
+        roundTimer = setInterval(updateTimer, 100);
+    });
+    
+    // Store unsubscribe function for cleanup
+    window.timerUnsubscribe = timerUnsubscribe;
 }
 
 // Auto-submit when time runs out
@@ -509,12 +890,19 @@ function autoSubmitRound() {
     submitBtn.click();
 }
 
-// Stop timer
+// Stop timer - UPDATED to clean up listener
 function stopRoundTimer() {
     if (roundTimer) {
         clearInterval(roundTimer);
         roundTimer = null;
     }
+    
+    // Unsubscribe from room timer listener
+    if (window.timerUnsubscribe) {
+        window.timerUnsubscribe();
+        window.timerUnsubscribe = null;
+    }
+    
     timerDisplay.classList.add('hidden');
     timerDisplay.classList.remove('warning');
 }
@@ -568,6 +956,29 @@ function listenForRoundChanges() {
             
             loadNewQuestion();
             startRoundTimer(roomData.timerSeconds);
+
+            if (isMobile) {
+                mobileRound.textContent = currentRound;
+                mobileSubmitBtn.disabled = false;
+                mobileClickPosition = null;
+                mobileCurrentSlice = 13;
+                mobileSliceSlider.value = 13;
+                updateMobileSlice();
+                mobileMarker.classList.remove('show');
+                
+                loadNewQuestion();
+                startMobileTimer(roomData.timerSeconds);
+            } else {
+                currentRoundDisplay.textContent = currentRound;
+                submitBtn.disabled = false;
+                
+                // UPDATE SCORE DISPLAY HERE
+                scoreDisplay.textContent = totalScore;
+                console.log('listenForRoundChanges updated score to:', totalScore);
+                
+                loadNewQuestion();
+                startRoundTimer(roomData.timerSeconds);
+            }
         }
         
         // Check if game is over
@@ -592,48 +1003,108 @@ function listenForRoundChanges() {
 // Monitor player count during multiplayer games
 function monitorPlayerCount() {
     if (!currentRoomCode || !playersRef) return;
+    if (monitoringActive) {
+        console.log('Already monitoring player count');
+        return;
+    }
     
-    const playerCountListener = playersRef.onSnapshot((snapshot) => {
+    monitoringActive = true;
+    
+    // Clean up old listener if exists
+    if (playerCountListener) {
+        playerCountListener();
+        playerCountListener = null;
+    }
+    
+    playerCountListener = playersRef.onSnapshot((snapshot) => {
         const playerCount = snapshot.size;
+        
+        console.log('Player count snapshot:', playerCount, 'Last:', lastPlayerCount);
         
         // Initialize on first call
         if (lastPlayerCount === 0) {
             lastPlayerCount = playerCount;
-            console.log('Starting with', playerCount, 'players');
+            console.log('Initialized monitoring with', playerCount, 'players');
+            return;
+        }
+        
+        // Ignore if count increased (shouldn't happen mid-game but just in case)
+        if (playerCount > lastPlayerCount) {
+            console.log('Player count increased, updating lastPlayerCount');
+            lastPlayerCount = playerCount;
             return;
         }
         
         // Check if someone left
         if (playerCount < lastPlayerCount) {
             const playersLost = lastPlayerCount - playerCount;
+            console.log(`${playersLost} player(s) disconnected`);
             showNotification(`${playersLost} player(s) disconnected (${playerCount} remaining)`);
             lastPlayerCount = playerCount;
         }
         
-        console.log('Active players:', playerCount);
-        
-        // If down to 1 player, end game
-        if (playerCount < 2) {
-            alert('Not enough players remaining. Returning to lobby.');
+        // Only end game if down to 1 player
+        if (playerCount === 1) {
+            console.log('Only 1 player remaining, ending game');
+            
+            // Clean up listener before reloading
+            if (playerCountListener) {
+                playerCountListener();
+                playerCountListener = null;
+            }
+            monitoringActive = false;
+            
+            alert('Other player disconnected. Returning to lobby.');
+            location.reload();
+        } else if (playerCount === 0) {
+            console.log('No players remaining');
+            if (playerCountListener) {
+                playerCountListener();
+                playerCountListener = null;
+            }
+            monitoringActive = false;
             location.reload();
         }
     });
-    
-    return playerCountListener;
 }
 
-// Start multiplayer game for all players
+// Start multiplayer game for all players - UPDATED to stop host presence
 async function startMultiplayerGame(roomData) {
     console.log('startMultiplayerGame called');
+    
+    // STOP HOST PRESENCE UPDATES (game is starting, no longer needed)
+    if (window.hostPresenceInterval) {
+        clearInterval(window.hostPresenceInterval);
+        window.hostPresenceInterval = null;
+        console.log('Stopped host presence updates - game starting');
+    }
+    
+    // Check if mobile
+    if (isMobile) {
+        startMobileGame(roomData);
+        return;
+    }
+
+    // Hide waiting panel if it exists
+    const waitingPanel = document.getElementById('waiting-panel');
+    if (waitingPanel) {
+        waitingPanel.classList.add('hidden');
+    }
+
+    // Ensure question sets are loaded
+    if (!questionSetsData) {
+        console.log('Question sets not loaded yet, loading now...');
+        await loadQuestionSets();
+    }
 
     // Start checking for disconnected players every 10 seconds
-    const disconnectCheckInterval = setInterval(() => {
-        if (currentRoomCode) {
-            checkForDisconnectedPlayers();
-        } else {
-            clearInterval(disconnectCheckInterval);
-        }
-    }, 10000);
+    // const disconnectCheckInterval = setInterval(() => {
+    //     if (currentRoomCode) {
+    //         checkForDisconnectedPlayers();
+    //     } else {
+    //         clearInterval(disconnectCheckInterval);
+    //     }
+    // }, 10000);
     
     // Fetch fresh room data to get current timer setting
     const freshRoomDoc = await roomRef.get();
@@ -737,6 +1208,30 @@ window.addEventListener('resize', () => {
     // Reposition results modal markers
     if (!resultsModal.classList.contains('hidden')) {
         positionResultMarkers();
+    }
+});
+
+// Clean up on page unload
+window.addEventListener('beforeunload', async (e) => {
+    if (currentRoomCode && playerName && playersRef) {
+        // For host leaving waiting room, we need to clean up synchronously
+        if (isRoomCreator && roomRef) {
+            // Use navigator.sendBeacon for more reliable cleanup
+            const beaconData = JSON.stringify({
+                action: 'closeRoom',
+                roomCode: currentRoomCode,
+                playerName: playerName
+            });
+            
+            // This is more reliable than async cleanup on unload
+            navigator.sendBeacon('/api/cleanup', beaconData); // You'd need a server endpoint
+            
+            // But also try the direct method
+            handlePlayerDisconnect();
+        } else {
+            // Regular player leaving
+            handlePlayerDisconnect();
+        }
     }
 });
 
@@ -939,6 +1434,15 @@ function loadNewQuestion() {
     resetView();
     
     console.log('Round:', currentRound, 'Question:', currentQuestion.id);
+
+    // Reset mobile view if on mobile
+    if (isMobile) {
+        mobileCurrentSlice = 13;
+        mobileSliceSlider.value = 13;
+        updateMobileSlice();
+        mobileClickPosition = null;
+        mobileMarker.classList.remove('show');
+    }
 }
 
 // Scroll through slices
@@ -1075,6 +1579,11 @@ function updateLeaderboard(allPlayersData) {
 
 // Show results modal
 function showResultsModal(score, distance, allPlayersData = null) {
+    if (isMobile) {
+        showMobileResults(score, distance, allPlayersData);
+        return;
+    }
+
     resultsRound.textContent = currentRound;
     resultScoreValue.textContent = score;
     resultDistanceValue.textContent = distance.toFixed(3);
@@ -1169,6 +1678,10 @@ function positionResultMarkers(allPlayersData = null) {
 
 // Hide results modal
 function hideResultsModal() {
+    if (isMobile) {
+        hideMobileResults();
+        return;
+    }
     resultsOverlay.classList.add('hidden');
     resultsModal.classList.add('hidden');
     
@@ -1279,8 +1792,11 @@ function waitForAllSubmissions() {
             // Get room data for current round results
             const roomDoc = await roomRef.get();
             const roomData = roomDoc.data();
+            // Get question from the set
             const questionId = roomData.questionOrder[currentRound - 1];
-            const question = questionsData.questions.find(q => q.id === questionId);
+            const setId = roomData.questionSetId || 'default';
+            const questions = getQuestionsFromSet(setId);
+            const question = questions ? questions.find(q => q.id === questionId) : null;
             
             // Get all players' data
             const allPlayersData = players.map(doc => ({
@@ -2272,13 +2788,74 @@ const findMatchBtn = document.getElementById('find-match-btn');
 const matchmakingPanel = document.getElementById('matchmaking-panel');
 const cancelMatchmakingBtn = document.getElementById('cancel-matchmaking-btn');
 const queueCount = document.getElementById('queue-count');
+const closeRoomBtn = document.getElementById('close-room-btn');
 
 let matchmakingListener = null;
 let queueCountListener = null;
 let myQueueId = null;
 
+if (closeRoomBtn) {
+    // Add this to the close room button listener (already exists but verify it calls this):
+    closeRoomBtn.addEventListener('click', async () => {
+        if (!confirm('Close this room? All players will be removed.')) {
+            return;
+        }
+        
+        await closeRoom();
+        
+        // After closing, return to lobby
+        createRoomPanel.classList.add('hidden');
+        lobbyMenu.classList.remove('hidden');
+    });
+}
+
+// Close room function (host only)
+async function closeRoom() {
+    if (!isRoomCreator || !currentRoomCode) return;
+    
+    try {
+        // Mark room as abandoned (this will kick all players via their listeners)
+        if (roomRef) {
+            await roomRef.update({ status: 'abandoned' });
+            console.log('Room closed');
+        }
+        
+        // Remove all players
+        if (playersRef) {
+            const playersSnapshot = await playersRef.get();
+            const deletePromises = playersSnapshot.docs.map(doc => doc.ref.delete());
+            await Promise.all(deletePromises);
+            console.log('All players removed');
+        }
+        
+        // Delete the room
+        if (roomRef) {
+            await roomRef.delete();
+            console.log('Room deleted');
+        }
+        
+    } catch (error) {
+        console.error('Error closing room:', error);
+    }
+    
+    // Reset state and return to lobby
+    currentRoomCode = null;
+    roomRef = null;
+    playersRef = null;
+    isRoomCreator = false;
+    
+    createRoomPanel.classList.add('hidden');
+    joinRoomPanel.classList.add('hidden');
+    singlePlayerPanel.classList.add('hidden');
+    lobbyMenu.classList.remove('hidden');
+}
+
 // Find Match
 findMatchBtn.addEventListener('click', async () => {
+    if (isInWaitingRoom()) {
+        alert('Please leave your current room first');
+        return;
+    }
     // Check if signed in
     if (!currentUser) {
         alert('Please sign in or play as guest first');
@@ -2626,4 +3203,451 @@ function getQuestionsFromSet(setId) {
     if (!questionSetsData) return [];
     const set = questionSetsData.questionSets.find(s => s.id === setId);
     return set ? set.questions : [];
+}
+
+// ============================================
+// MOBILE INTERFACE
+// ============================================
+
+// Detect if mobile device
+// Detect if mobile device
+const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth <= 768;
+
+console.log('Is mobile:', isMobile, 'Width:', window.innerWidth);  // DEBUG
+
+// Mobile DOM elements
+const mobileLobby = document.getElementById('mobile-lobby');
+const mobileGameContainer = document.querySelector('.mobile-game-container');
+const mobileNameInput = document.getElementById('mobile-name-input');
+const mobileRoomCode = document.getElementById('mobile-room-code');
+const mobileJoinBtn = document.getElementById('mobile-join-btn');
+const mobileError = document.getElementById('mobile-error');
+
+const mobileRound = document.getElementById('mobile-round');
+const mobileTimerValue = document.getElementById('mobile-timer-value');
+const mobileBrainSlice = document.getElementById('mobile-brain-slice');
+const mobileMarker = document.getElementById('mobile-marker');
+const mobileSliceSlider = document.getElementById('mobile-slice-slider');
+const mobileSliceNum = document.getElementById('mobile-slice-num');
+const mobileSubmitBtn = document.getElementById('mobile-submit-btn');
+const mobileExitBtn = document.getElementById('mobile-exit-btn');
+
+const mobileResultsOverlay = document.getElementById('mobile-results-overlay');
+const mobileResultsModal = document.getElementById('mobile-results-modal');
+const mobileResultsRound = document.getElementById('mobile-results-round');
+const mobileScoreValue = document.getElementById('mobile-score-value');
+const mobileLeaderboardList = document.getElementById('mobile-leaderboard-list');
+const mobileContinueBtn = document.getElementById('mobile-continue-btn');
+const mobileExitResultsBtn = document.getElementById('mobile-exit-results-btn');
+const mobileWaitingMsg = document.getElementById('mobile-waiting-msg');
+const mobileWaitingTimer = document.getElementById('mobile-waiting-timer');
+
+// Mobile state
+let mobileCurrentSlice = 13;
+let mobileClickPosition = null;
+let mobileTimer = null;
+let mobileTimeRemaining = 30;
+
+// Show mobile or desktop lobby on load
+if (isMobile) {
+    mobileLobby.classList.remove('hidden');
+    document.getElementById('lobby-screen').style.display = 'none';
+} else {
+    mobileLobby.classList.add('hidden');
+}
+
+// Mobile Join Game
+mobileJoinBtn.addEventListener('click', async () => {
+    const roomCode = mobileRoomCode.value.trim().toUpperCase();
+    const displayName = mobileNameInput.value.trim() || 'Guest';
+    
+    if (!roomCode || roomCode.length !== 6) {
+        mobileError.textContent = 'Please enter a valid 6-digit room code';
+        mobileError.classList.remove('hidden');
+        return;
+    }
+    
+    mobileError.classList.add('hidden');
+    
+    try {
+        // Sign in anonymously
+        if (!currentUser) {
+            await auth.signInAnonymously();
+        }
+        
+        // Check if room exists
+        roomRef = db.collection('rooms').doc(roomCode);
+        const roomDoc = await roomRef.get();
+        
+        if (!roomDoc.exists) {
+            mobileError.textContent = 'Room not found';
+            mobileError.classList.remove('hidden');
+            return;
+        }
+        
+        const roomData = roomDoc.data();
+        if (roomData.status !== 'waiting') {
+            mobileError.textContent = 'Game already in progress';
+            mobileError.classList.remove('hidden');
+            return;
+        }
+        
+        // Join room
+        currentRoomCode = roomCode;
+        playerName = displayName;
+        isRoomCreator = false;
+        
+        playersRef = roomRef.collection('players');
+        
+        // Check if name is taken
+        const existingPlayer = await playersRef.doc(playerName).get();
+        if (existingPlayer.exists) {
+            mobileError.textContent = 'Name already taken in this room';
+            mobileError.classList.remove('hidden');
+            return;
+        }
+        
+        await playersRef.doc(playerName).set({
+            name: playerName,
+            joinedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            isCreator: false,
+            score: 0,
+            isMobile: true
+        });
+        
+        console.log('Mobile user joined room:', roomCode);
+        
+        // Hide lobby, wait for game start
+        mobileLobby.classList.add('hidden');
+        
+        // Listen for game start
+        listenForGameStart();
+        
+        // Show waiting message
+        alert('Joined room! Waiting for host to start game...');
+        
+    } catch (error) {
+        console.error('Mobile join error:', error);
+        mobileError.textContent = 'Error joining room';
+        mobileError.classList.remove('hidden');
+    }
+});
+
+// Mobile slice slider
+mobileSliceSlider.addEventListener('input', (e) => {
+    mobileCurrentSlice = parseInt(e.target.value);
+    updateMobileSlice();
+    updateMobileMarkerOpacity();
+});
+
+// Update mobile slice
+function updateMobileSlice() {
+    const sliceStr = String(mobileCurrentSlice).padStart(3, '0');
+    mobileBrainSlice.src = `images/slice_${sliceStr}.png`;
+    mobileSliceNum.textContent = mobileCurrentSlice;
+}
+
+// Mobile tap on brain
+mobileBrainSlice.addEventListener('click', (e) => {
+    const rect = mobileBrainSlice.getBoundingClientRect();
+    const viewer = document.querySelector('.mobile-brain-viewer');
+    const viewerRect = viewer.getBoundingClientRect();
+    
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    mobileClickPosition = {
+        x: x / rect.width,
+        y: y / rect.height,
+        slice: mobileCurrentSlice
+    };
+    
+    // Position marker
+    const markerX = e.clientX - viewerRect.left;
+    const markerY = e.clientY - viewerRect.top;
+    
+    mobileMarker.style.left = markerX + 'px';
+    mobileMarker.style.top = markerY + 'px';
+    mobileMarker.classList.add('show');
+    
+    console.log('Mobile clicked position:', mobileClickPosition);
+});
+
+// Update marker opacity
+function updateMobileMarkerOpacity() {
+    if (mobileMarker && mobileClickPosition) {
+        if (mobileCurrentSlice === mobileClickPosition.slice) {
+            mobileMarker.style.opacity = '1';
+        } else {
+            mobileMarker.style.opacity = '0.3';
+        }
+    }
+}
+
+// Mobile submit guess
+mobileSubmitBtn.addEventListener('click', async () => {
+    if (!mobileClickPosition) {
+        alert('Please tap on the brain image to mark your guess');
+        return;
+    }
+    
+    if (!currentQuestion) {
+        alert('No question loaded');
+        return;
+    }
+    
+    // Stop timer
+    stopMobileTimer();
+    
+    // Calculate distance and score (same logic as desktop)
+    const dx = mobileClickPosition.x - currentQuestion.x;
+    const dy = mobileClickPosition.y - currentQuestion.y;
+    const dz = (mobileClickPosition.slice - currentQuestion.slice) / totalSlices;
+    
+    const distance = Math.sqrt(dx*dx + dy*dy + dz*dz);
+    const score = Math.max(0, Math.round(1000 * Math.exp(-distance * 3)));
+    
+    totalScore += score;
+    
+    // Save to Firebase
+    hasSubmittedThisRound = true;
+    mobileSubmitBtn.disabled = true;
+    
+    await playersRef.doc(playerName).update({
+        [`round${currentRound}`]: {
+            x: mobileClickPosition.x,
+            y: mobileClickPosition.y,
+            slice: mobileClickPosition.slice,
+            score: score,
+            distance: distance,
+            submittedAt: firebase.firestore.FieldValue.serverTimestamp()
+        },
+        score: totalScore
+    });
+    
+    console.log('Mobile submission saved');
+    
+    // Show waiting
+    mobileTimerValue.textContent = 'Waiting...';
+    
+    // Wait for all players
+    waitForAllSubmissions();
+});
+
+// Mobile exit game
+mobileExitBtn.addEventListener('click', async () => {
+    if (confirm('Are you sure you want to exit?')) {
+        if (playersRef && playerName) {
+            await playersRef.doc(playerName).delete();
+        }
+        location.reload();
+    }
+});
+
+// Mobile timer - UPDATED to use server time
+function startMobileTimer(seconds) {
+    // Clear any existing timer
+    if (mobileTimer) clearInterval(mobileTimer);
+    
+    const timerElement = document.querySelector('.mobile-timer');
+    timerElement.classList.remove('warning');
+    mobileTimerValue.textContent = seconds;
+    
+    // Listen to room for server timestamp
+    const mobileTimerUnsubscribe = roomRef.onSnapshot((doc) => {
+        if (!doc.exists) {
+            clearInterval(mobileTimer);
+            if (mobileTimerUnsubscribe) mobileTimerUnsubscribe();
+            return;
+        }
+        
+        const data = doc.data();
+        const roundStartTime = data.roundStartTime?.toMillis();
+        const roundDuration = data.timerSeconds || seconds;
+        
+        if (!roundStartTime) return;
+        
+        // Clear any existing interval before starting new one
+        if (mobileTimer) clearInterval(mobileTimer);
+        
+        // Calculate time remaining based on server time
+        const updateTimer = () => {
+            const now = Date.now();
+            const elapsed = (now - roundStartTime) / 1000; // seconds elapsed
+            mobileTimeRemaining = Math.max(0, Math.ceil(roundDuration - elapsed));
+            
+            mobileTimerValue.textContent = mobileTimeRemaining;
+            
+            // Warning animation at 10 seconds
+            if (mobileTimeRemaining <= 10) {
+                timerElement.classList.add('warning');
+            }
+            
+            // Time's up
+            if (mobileTimeRemaining <= 0) {
+                clearInterval(mobileTimer);
+                if (mobileTimerUnsubscribe) mobileTimerUnsubscribe();
+                autoSubmitMobileRound();
+            }
+        };
+        
+        // Update immediately
+        updateTimer();
+        
+        // Then update every 100ms for smooth countdown
+        mobileTimer = setInterval(updateTimer, 100);
+    });
+    
+    // Store unsubscribe function for cleanup
+    window.mobileTimerUnsubscribe = mobileTimerUnsubscribe;
+}
+
+// Stop mobile timer - UPDATED to clean up listener
+function stopMobileTimer() {
+    if (mobileTimer) {
+        clearInterval(mobileTimer);
+        mobileTimer = null;
+    }
+    
+    // Unsubscribe from room timer listener
+    if (window.mobileTimerUnsubscribe) {
+        window.mobileTimerUnsubscribe();
+        window.mobileTimerUnsubscribe = null;
+    }
+}
+
+// Auto-submit on timeout
+function autoSubmitMobileRound() {
+    if (!mobileClickPosition) {
+        mobileClickPosition = { x: 0, y: 0, slice: 0 };
+        
+        if (currentRoomCode) {
+            hasSubmittedThisRound = true;
+            mobileSubmitBtn.disabled = true;
+            
+            playersRef.doc(playerName).update({
+                [`round${currentRound}`]: {
+                    x: 0, y: 0, slice: 0,
+                    score: 0, distance: 999,
+                    submittedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    timedOut: true
+                }
+            });
+            
+            mobileTimerValue.textContent = 'Time\'s up!';
+            waitForAllSubmissions();
+            return;
+        }
+    }
+    
+    mobileSubmitBtn.click();
+}
+
+// Show mobile results
+function showMobileResults(score, distance, allPlayersData) {
+    mobileResultsRound.textContent = currentRound;
+    mobileScoreValue.textContent = score;
+    
+    // Update leaderboard
+    updateMobileLeaderboard(allPlayersData);
+    
+    mobileResultsOverlay.classList.remove('hidden');
+    mobileResultsModal.classList.remove('hidden');
+}
+
+// Update mobile leaderboard
+function updateMobileLeaderboard(allPlayersData) {
+    if (!allPlayersData) return;
+    
+    const sortedPlayers = allPlayersData.sort((a, b) => b.score - a.score);
+    
+    mobileLeaderboardList.innerHTML = '';
+    
+    sortedPlayers.forEach((player, index) => {
+        const item = document.createElement('div');
+        item.className = 'mobile-leaderboard-item';
+        
+        if (player.name === playerName) {
+            item.classList.add('current');
+        }
+        
+        const rank = document.createElement('span');
+        rank.className = 'mobile-leaderboard-rank';
+        if (index === 0) rank.classList.add('first');
+        rank.textContent = '#' + (index + 1);
+        
+        const name = document.createElement('span');
+        name.className = 'mobile-leaderboard-name';
+        name.textContent = player.name;
+        
+        const score = document.createElement('span');
+        score.className = 'mobile-leaderboard-score';
+        score.textContent = player.score || 0;
+        
+        item.appendChild(rank);
+        item.appendChild(name);
+        item.appendChild(score);
+        
+        mobileLeaderboardList.appendChild(item);
+    });
+}
+
+// Mobile continue button
+mobileContinueBtn.addEventListener('click', async () => {
+    await playersRef.doc(playerName).update({
+        [`round${currentRound}Ready`]: true
+    });
+    
+    mobileContinueBtn.disabled = true;
+    mobileContinueBtn.textContent = 'Waiting...';
+    mobileWaitingMsg.classList.remove('hidden');
+    
+    // Countdown
+    let countdown = 15;
+    mobileWaitingTimer.textContent = countdown;
+    const countdownInterval = setInterval(() => {
+        countdown--;
+        mobileWaitingTimer.textContent = countdown;
+        if (countdown <= 0) clearInterval(countdownInterval);
+    }, 1000);
+    
+    waitForNextRound();
+});
+
+// Mobile exit from results
+mobileExitResultsBtn.addEventListener('click', async () => {
+    if (confirm('Are you sure you want to exit?')) {
+        if (playersRef && playerName) {
+            await playersRef.doc(playerName).delete();
+        }
+        location.reload();
+    }
+});
+
+// Hide mobile results
+function hideMobileResults() {
+    mobileResultsOverlay.classList.add('hidden');
+    mobileResultsModal.classList.add('hidden');
+    mobileContinueBtn.disabled = false;
+    mobileContinueBtn.textContent = 'Continue';
+    mobileWaitingMsg.classList.add('hidden');
+}
+
+// Start mobile game
+function startMobileGame(roomData) {
+    console.log('Starting mobile game');
+    
+    // Show game container
+    mobileGameContainer.classList.remove('hidden');
+    
+    // Reset state
+    currentRound = 1;
+    totalScore = 0;
+    mobileRound.textContent = currentRound;
+    
+    // Load first question
+    loadNewQuestion();
+    
+    // Start timer
+    startMobileTimer(roomData.timerSeconds);
 }

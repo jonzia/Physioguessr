@@ -623,11 +623,46 @@ button:hover {
     max-height: 90vh;
     overflow-y: auto;
     margin: auto;
+    position: relative;
 }
 
 .lobby-container h1 {
     color: #4CAF50;
     margin-bottom: 30px;
+}
+
+.lobby-loading {
+    position: absolute;  /* CHANGED from fixed */
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.9);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 300;
+    border-radius: 15px;  /* Match lobby container */
+}
+
+.lobby-loading.hidden {
+    display: none !important;
+}
+
+.lobby-loading .spinner {
+    width: 60px;
+    height: 60px;
+    border: 6px solid #555;
+    border-top: 6px solid #4CAF50;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 20px;
+}
+
+.lobby-loading p {
+    color: #4CAF50;
+    font-size: 18px;
 }
 
 .player-name-section {
@@ -756,6 +791,28 @@ button:hover {
     margin-bottom: 10px;
 }
 
+#waiting-players-list,
+#players-list {
+    list-style: none;
+    padding: 0;
+}
+
+#waiting-players-list li,
+#players-list li {
+    background: #1a1a1a;
+    padding: 10px;
+    margin: 5px 0;
+    border-radius: 5px;
+}
+
+#leave-waiting-btn {
+    margin-top: 20px;
+}
+
+#close-room-btn {
+    margin-top: 20px;
+}
+
 #players-list {
     list-style: none;
     padding: 0;
@@ -793,8 +850,8 @@ button:hover {
 .waiting-message {
     text-align: center;
     color: #aaa;
-    font-size: 16px;
-    margin: 10px 0 0 0;
+    font-style: italic;
+    margin-top: 20px;
 }
 
 /* Opponent Markers */
@@ -1376,4 +1433,334 @@ button:hover {
 .question-set-select option {
     background: #1a1a1a;
     color: #fff;
+}
+
+/* ============================================
+   MOBILE STYLES
+   ============================================ */
+
+/* Force hide mobile elements on desktop */
+@media (min-width: 769px) {
+    .mobile-lobby,
+    .mobile-game-container,
+    .mobile-results-modal {
+        display: none !important;
+    }
+}
+
+/* Show mobile, hide desktop on mobile screens */
+@media (max-width: 768px) {
+    /* Hide desktop elements on mobile */
+    .lobby-screen,
+    .game-container,
+    .results-modal,
+    .game-over,
+    .set-manager-modal {
+        display: none !important;
+    }
+    
+    /* Show mobile elements */
+    .mobile-lobby {
+        display: flex !important;
+    }
+    
+    .mobile-game-container {
+        display: flex !important;
+    }
+    
+    .mobile-lobby.hidden,
+    .mobile-game-container.hidden,
+    .mobile-results-modal.hidden {
+        display: none !important;
+    }
+}
+
+/* Mobile Lobby */
+.mobile-lobby {
+    width: 100%;
+    min-height: 100vh;
+    background: #1a1a1a;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+}
+
+.mobile-lobby-container {
+    background: #2a2a2a;
+    padding: 30px;
+    border-radius: 15px;
+    width: 100%;
+    max-width: 400px;
+}
+
+.mobile-lobby-container h1 {
+    color: #4CAF50;
+    text-align: center;
+    margin-bottom: 30px;
+}
+
+.mobile-name-input,
+.mobile-room-input {
+    margin-bottom: 20px;
+}
+
+.mobile-name-input label,
+.mobile-room-input label {
+    display: block;
+    color: #aaa;
+    margin-bottom: 8px;
+    font-size: 14px;
+}
+
+.mobile-name-input input,
+.mobile-room-input input {
+    width: 100%;
+    padding: 15px;
+    font-size: 18px;
+    text-align: center;
+    text-transform: uppercase;
+    border-radius: 8px;
+    border: 2px solid #555;
+    background: #1a1a1a;
+    color: #fff;
+}
+
+.mobile-name-input input {
+    text-transform: none;
+}
+
+.mobile-btn {
+    width: 100%;
+    padding: 15px;
+    font-size: 18px;
+    font-weight: bold;
+    border: none;
+    border-radius: 8px;
+    background: #4CAF50;
+    color: white;
+    cursor: pointer;
+    margin-bottom: 10px;
+}
+
+.mobile-btn:active {
+    background: #45a049;
+}
+
+.mobile-exit-btn {
+    background: #f44336;
+}
+
+.mobile-exit-btn:active {
+    background: #d32f2f;
+}
+
+.mobile-error {
+    color: #f44336;
+    text-align: center;
+    margin-top: 15px;
+}
+
+/* Mobile Game Container */
+.mobile-game-container {
+    width: 100%;
+    min-height: 100vh;
+    background: #1a1a1a;
+    display: flex;
+    flex-direction: column;
+    padding: 15px;
+}
+
+.mobile-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px;
+    background: #2a2a2a;
+    border-radius: 10px;
+    margin-bottom: 15px;
+}
+
+.mobile-round {
+    font-size: 18px;
+    font-weight: bold;
+    color: #4CAF50;
+}
+
+.mobile-timer {
+    font-size: 24px;
+    font-weight: bold;
+    color: #FF9800;
+}
+
+.mobile-timer.warning {
+    color: #f44336;
+    animation: pulse 1s infinite;
+}
+
+.mobile-brain-viewer {
+    position: relative;
+    background: #000;
+    border-radius: 10px;
+    padding: 10px;
+    margin-bottom: 15px;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+#mobile-brain-slice {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+}
+
+.mobile-marker {
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    background: rgba(255, 0, 0, 0.8);
+    border: 3px solid white;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    box-shadow: 0 0 15px rgba(255, 0, 0, 0.8);
+    display: none;
+}
+
+.mobile-marker.show {
+    display: block;
+}
+
+.mobile-slice-control {
+    background: #2a2a2a;
+    padding: 15px;
+    border-radius: 10px;
+    margin-bottom: 15px;
+    text-align: center;
+}
+
+.mobile-slider {
+    width: 100%;
+    height: 10px;
+    margin-bottom: 10px;
+}
+
+.mobile-slice-label {
+    color: #4CAF50;
+    font-weight: bold;
+    font-size: 16px;
+}
+
+.mobile-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.mobile-actions .mobile-btn {
+    flex: 1;
+    margin: 0;
+}
+
+/* Mobile Results Modal */
+.mobile-results-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100vh;
+    background: #2a2a2a;
+    z-index: 300;
+    overflow-y: auto;
+    padding: 20px;
+}
+
+.mobile-results-modal h2 {
+    color: #4CAF50;
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.mobile-results-score {
+    background: #1a1a1a;
+    padding: 20px;
+    border-radius: 10px;
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.mobile-results-score .score-label {
+    color: #aaa;
+    font-size: 14px;
+    margin-bottom: 10px;
+}
+
+.mobile-results-score .score-big {
+    color: #4CAF50;
+    font-size: 48px;
+    font-weight: bold;
+}
+
+.mobile-leaderboard {
+    background: #1a1a1a;
+    padding: 15px;
+    border-radius: 10px;
+    margin-bottom: 20px;
+}
+
+.mobile-leaderboard h3 {
+    color: #4CAF50;
+    margin-bottom: 15px;
+    text-align: center;
+}
+
+#mobile-leaderboard-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.mobile-leaderboard-item {
+    background: #2a2a2a;
+    padding: 12px;
+    border-radius: 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.mobile-leaderboard-item.current {
+    border: 2px solid #4CAF50;
+}
+
+.mobile-leaderboard-rank {
+    font-weight: bold;
+    color: #aaa;
+    margin-right: 10px;
+}
+
+.mobile-leaderboard-rank.first {
+    color: #FFD700;
+}
+
+.mobile-leaderboard-name {
+    flex: 1;
+}
+
+.mobile-leaderboard-score {
+    font-weight: bold;
+    color: #4CAF50;
+}
+
+.mobile-results-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.mobile-waiting {
+    text-align: center;
+    color: #aaa;
+    padding: 10px;
 }
