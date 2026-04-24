@@ -1439,6 +1439,83 @@ button:hover {
    MOBILE STYLES
    ============================================ */
 
+.mobile-waiting-panel {
+    width: 100%;
+    min-height: 100vh;
+    background: #1a1a1a;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+}
+
+.mobile-waiting-container {
+    background: #2a2a2a;
+    padding: 30px;
+    border-radius: 15px;
+    width: 100%;
+    max-width: 400px;
+}
+
+.mobile-waiting-container h2 {
+    color: #4CAF50;
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.mobile-room-code-display {
+    background: #1a1a1a;
+    padding: 15px;
+    border-radius: 10px;
+    margin-bottom: 20px;
+    text-align: center;
+}
+
+.mobile-room-code-display p {
+    color: #aaa;
+    margin-bottom: 5px;
+}
+
+.mobile-room-code-display h3 {
+    color: #4CAF50;
+    font-size: 28px;
+    letter-spacing: 3px;
+    margin: 0;
+}
+
+.mobile-waiting-players {
+    background: #1a1a1a;
+    padding: 15px;
+    border-radius: 10px;
+    margin-bottom: 20px;
+}
+
+.mobile-waiting-players h4 {
+    color: #4CAF50;
+    margin-bottom: 10px;
+    font-size: 16px;
+}
+
+#mobile-waiting-players-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.mobile-waiting-player {
+    background: #2a2a2a;
+    padding: 10px;
+    border-radius: 5px;
+    color: #fff;
+}
+
+.mobile-waiting-message {
+    text-align: center;
+    color: #aaa;
+    font-style: italic;
+    margin-bottom: 20px;
+}
+
 /* Force hide mobile elements on desktop */
 @media (min-width: 769px) {
     .mobile-lobby,
