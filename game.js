@@ -652,30 +652,49 @@ joinRoomSubmitBtn.addEventListener('click', async () => {
                         diff: (now - hostLastSeen) / 1000
                     });
                     
-                    if (hostLastSeen && (now - hostLastSeen) > 6000) {
-                        // Host hasn't updated in 6 seconds - they're gone
-                        console.log('Host presence expired - cleaning up room');
-                        clearInterval(window.hostPresenceChecker);
-                        window.hostPresenceChecker = null;
-                        if (unsubscribeRoom) unsubscribeRoom();
+                    if (hostLastSeen && (now - hostLastSeen) > 10000) {  // Changed from 6000 to 10000
+                        // Host hasn't updated in 10 seconds - double check before closing
+                        console.log('Host presence possibly expired - double checking...');
                         
-                        alert('Host has disconnected. Room is closing.');
-                        
-                        // Clean up room completely
-                        try {
-                            // Delete all players
-                            const playersSnapshot = await playersRef.get();
-                            await Promise.all(playersSnapshot.docs.map(doc => doc.ref.delete()));
+                        // Wait 2 seconds and check again
+                        setTimeout(async () => {
+                            const doubleCheckDoc = await roomRef.get();
+                            if (!doubleCheckDoc.exists) return;
                             
-                            // Delete the room itself
-                            await roomRef.delete();
-                            console.log('Room completely cleaned up after host disconnect');
-                        } catch (error) {
-                            console.error('Error cleaning up room:', error);
-                        }
-                        
-                        // Return to lobby
-                        leaveRoom();
+                            const doubleCheckData = doubleCheckDoc.data();
+                            const doubleCheckLastSeen = doubleCheckData.hostLastSeen?.toMillis();
+                            const doubleCheckNow = Date.now();
+                            
+                            console.log('Double check:', {
+                                hostLastSeen: new Date(doubleCheckLastSeen),
+                                now: new Date(doubleCheckNow),
+                                diff: (doubleCheckNow - doubleCheckLastSeen) / 1000
+                            });
+                            
+                            if (doubleCheckLastSeen && (doubleCheckNow - doubleCheckLastSeen) > 10000) {
+                                // Still expired after double check - host is truly gone
+                                console.log('Host presence confirmed expired - cleaning up room');
+                                clearInterval(window.hostPresenceChecker);
+                                window.hostPresenceChecker = null;
+                                if (unsubscribeRoom) unsubscribeRoom();
+                                
+                                alert('Host has disconnected. Room is closing.');
+                                
+                                // Clean up room completely
+                                try {
+                                    const playersSnapshot = await playersRef.get();
+                                    await Promise.all(playersSnapshot.docs.map(doc => doc.ref.delete()));
+                                    await roomRef.delete();
+                                    console.log('Room completely cleaned up after host disconnect');
+                                } catch (error) {
+                                    console.error('Error cleaning up room:', error);
+                                }
+                                
+                                leaveRoom();
+                            } else {
+                                console.log('False alarm - host is still present');
+                            }
+                        }, 2000);
                     }
                 } catch (error) {
                     console.error('Host presence check error:', error);
@@ -1823,6 +1842,11 @@ function waitForAllSubmissions() {
 
 // Submit guess
 submitBtn.addEventListener('click', async () => {
+    if (hasSubmittedThisRound) {
+        console.log('Already submitted this round');
+        return;
+    }
+    
     if (!clickPosition) {
         alert('Please click on the brain image to mark the lesion location');
         return;
@@ -3239,7 +3263,12 @@ function getQuestionsFromSet(setId) {
 
 // Detect if mobile device
 // Detect if mobile device
-const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth <= 768;
+// Detect if mobile device - UPDATED for better detection
+const isMobile = (
+    /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
+    window.innerWidth <= 768 ||
+    ('ontouchstart' in window) // Touch support
+) && window.innerWidth <= 768; // AND narrow screen
 
 console.log('Is mobile:', isMobile, 'Width:', window.innerWidth);  // DEBUG
 
@@ -3688,6 +3717,12 @@ function hideMobileResults() {
 // Start mobile game
 function startMobileGame(roomData) {
     console.log('Starting mobile game');
+    
+    // Hide mobile waiting panel
+    const mobileWaitingPanel = document.getElementById('mobile-waiting-panel');
+    if (mobileWaitingPanel) {
+        mobileWaitingPanel.classList.add('hidden');
+    }
     
     // Show game container
     mobileGameContainer.classList.remove('hidden');
