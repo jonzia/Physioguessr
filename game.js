@@ -799,7 +799,19 @@ function listenForGameStart() {
         
         if (roomData.status === 'playing' && !hasGameStarted) {
             hasGameStarted = true;
-            startMultiplayerGame(roomData);
+            
+            // Check if mobile
+            if (isMobile) {
+                // Hide mobile waiting panel if it exists
+                const mobileWaitingPanel = document.getElementById('mobile-waiting-panel');
+                if (mobileWaitingPanel) {
+                    mobileWaitingPanel.classList.add('hidden');
+                }
+                
+                startMobileGame(roomData);
+            } else {
+                startMultiplayerGame(roomData);
+            }
         }
     });
 }
@@ -1100,6 +1112,14 @@ async function startMultiplayerGame(roomData) {
         window.hostPresenceInterval = null;
         console.log('Stopped host presence updates - game starting');
     }
+    
+    // Hide ALL lobby/waiting panels
+    const waitingPanel = document.getElementById('waiting-panel');
+    if (waitingPanel) {
+        waitingPanel.classList.add('hidden');
+    }
+    createRoomPanel.classList.add('hidden');
+    joinRoomPanel.classList.add('hidden');
     
     // Check if mobile
     if (isMobile) {
@@ -3843,7 +3863,14 @@ function hideMobileResults() {
 function startMobileGame(roomData) {
     console.log('Starting mobile game');
     
-    // Hide mobile waiting panel
+    // STOP HOST PRESENCE UPDATES
+    if (window.hostPresenceInterval) {
+        clearInterval(window.hostPresenceInterval);
+        window.hostPresenceInterval = null;
+    }
+    
+    // Hide mobile lobby AND waiting panel
+    mobileLobby.classList.add('hidden');
     const mobileWaitingPanel = document.getElementById('mobile-waiting-panel');
     if (mobileWaitingPanel) {
         mobileWaitingPanel.classList.add('hidden');
