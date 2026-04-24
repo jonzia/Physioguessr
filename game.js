@@ -785,7 +785,6 @@ startGameBtn.addEventListener('click', async () => {
     const freshRoomData = freshRoomDoc.data();
     
     // Start the game immediately for host
-    hasGameStarted = true;
     startMultiplayerGame(freshRoomData);
 });
 
