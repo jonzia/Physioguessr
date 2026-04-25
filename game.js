@@ -592,7 +592,7 @@ joinRoomSubmitBtn.addEventListener('click', async () => {
             return;
         }
 
-        // Only block joining if NOT presenter mode
+        // Allow joining if presenter mode OR if waiting
         if (roomData.status !== 'waiting' && !roomData.presenterMode) {
             joinError.textContent = 'Game already in progress';
             joinError.classList.remove('hidden');
@@ -2437,6 +2437,7 @@ function waitForAllSubmissions() {
 function listenForPresenterResults() {
     if (!isPresenterMode || isRoomCreator) return;
     
+    // Use a persistent listener, not one that unsubscribes
     const resultsListener = roomRef.onSnapshot(async (doc) => {
         if (!doc.exists) return;
         
@@ -2444,7 +2445,7 @@ function listenForPresenterResults() {
         
         // Check if presenter triggered results
         if (roomData.showingResults && roomData.resultsStartTime) {
-            console.log('Presenter triggered results');
+            console.log('Presenter triggered results for round', currentRound);
             
             // Get question data
             const questionId = roomData.questionOrder[currentRound - 1];
@@ -2462,18 +2463,28 @@ function listenForPresenterResults() {
             
             // Get my data
             const myData = allPlayersData.find(p => p.id === playerName);
+            
+            if (!myData) {
+                console.log('Guest has not submitted yet, waiting...');
+                return;
+            }
+            
             const myRoundData = myData[`round${currentRound}`];
+            
+            if (!myRoundData) {
+                console.log('Guest round data not found yet');
+                return;
+            }
             
             // Show results for guest (with score/distance)
             showResultsModal(myRoundData.score, myRoundData.distance, allPlayersData);
             
-            // Hide continue button for guests
+            // Hide continue button for guests, show waiting message
             continueBtn.classList.add('hidden');
             waitingMessage.classList.remove('hidden');
             waitingMessage.innerHTML = 'Waiting for presenter to continue...';
             
-            // Unsubscribe
-            resultsListener();
+            // KEEP LISTENER ACTIVE for next round
         }
     });
 }
@@ -4046,7 +4057,8 @@ mobileJoinBtn.addEventListener('click', async () => {
             return;
         }
         
-        if (roomData.status !== 'waiting') {
+        // Allow joining if presenter mode OR if waiting
+        if (roomData.status !== 'waiting' && !roomData.presenterMode) {
             mobileError.textContent = 'Game already in progress';
             mobileError.classList.remove('hidden');
             return;
