@@ -1094,15 +1094,14 @@ async function startMultiplayerGame(roomData) {
         window.hostPresenceChecker = null;
     }
     
-    // HIDE ALL PANELS - THIS IS THE IMPORTANT PART
-    lobbyScreen.style.display = 'none';  // Hide entire lobby
+    // HIDE ALL PANELS - INCLUDING MOBILE
+    const mobileWaitingPanel = document.getElementById('mobile-waiting-panel');
+    if (mobileWaitingPanel) {
+        mobileWaitingPanel.classList.add('hidden');
+    }
+    
     createRoomPanel.classList.add('hidden');
     joinRoomPanel.classList.add('hidden');
-    
-    const waitingPanel = document.getElementById('waiting-panel');
-    if (waitingPanel) {
-        waitingPanel.classList.add('hidden');
-    }
     
     // Check if mobile
     if (isMobile) {
