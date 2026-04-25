@@ -4590,6 +4590,12 @@ function startPlayerCensus() {
 function startHostStaleCheck() {
     if (!isRoomCreator || !playersRef) return;
     
+    // ADD - Don't run stale check in presenter mode
+    if (isPresenterMode) {
+        console.log('Presenter mode - skipping stale check');
+        return;
+    }
+    
     const checkInterval = setInterval(async () => {
         if (!currentRoomCode || !isRoomCreator) {
             clearInterval(checkInterval);
@@ -4639,6 +4645,12 @@ function startHostStaleCheck() {
 
 function startGuestHostMonitor() {
     if (isRoomCreator || !playersRef) return;
+    
+    // ADD - Don't run host monitor in presenter mode
+    if (isPresenterMode) {
+        console.log('Presenter mode - skipping host monitor');
+        return;
+    }
     
     const monitorInterval = setInterval(async () => {
         if (!currentRoomCode || isRoomCreator) {
