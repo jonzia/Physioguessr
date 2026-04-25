@@ -959,7 +959,10 @@ function listenForRoundChanges() {
             console.log('listenForRoundChanges updated score to:', totalScore);
             
             loadNewQuestion();
-            startRoundTimer(roomData.timerSeconds);
+            // Wait a moment for Firebase to fully update roundStartTime
+            setTimeout(() => {
+                startRoundTimer(roomData.timerSeconds);
+            }, 200);  // 200ms delay
 
             if (isMobile) {
                 mobileRound.textContent = currentRound;
@@ -3641,6 +3644,7 @@ function autoSubmitMobileRound() {
 
 // Show mobile results
 function showMobileResults(score, distance, allPlayersData) {
+    console.log('showMobileResults called');
     mobileResultsRound.textContent = currentRound;
     mobileScoreValue.textContent = score;
     
