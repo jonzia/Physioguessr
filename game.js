@@ -60,6 +60,7 @@ let monitoringActive = false;
 let roundTimerInstance = null;
 let mobileRoundTimerInstance = null;
 let resultsTimerInstance = null;
+let waitingInterval = null;
 
 // ============================================
 // SERVER-SYNCHRONIZED TIMER SYSTEM
@@ -859,9 +860,15 @@ function listenForRoundChanges() {
         
         // If room's current round is ahead of what we've processed, force advance
         if (roomData.currentRound > lastSeenRound && roomData.currentRound > currentRound && !isStartingNewRound) {
-            isStartingNewRound = true; // Set flag immediately
+            isStartingNewRound = true;
             console.log('Forced to advance to round', roomData.currentRound);
             lastSeenRound = roomData.currentRound;
+            
+            // CLEAR WAITING INTERVAL FROM PREVIOUS ROUND
+            if (waitingInterval) {
+                clearInterval(waitingInterval);
+                waitingInterval = null;
+            }
             
             // Clean up results timer
             if (resultsTimerInstance) {
@@ -1985,6 +1992,12 @@ submitBtn.addEventListener('click', async () => {
         // FIX 2: Change timer display to show waiting message with countdown
         timerDisplay.classList.remove('hidden', 'warning');
 
+        // CLEAR any existing waiting interval first
+        if (waitingInterval) {
+            clearInterval(waitingInterval);
+            waitingInterval = null;
+        }
+
         // Get remaining time and show countdown
         roomRef.get().then((doc) => {
             if (!doc.exists) return;
@@ -2004,12 +2017,15 @@ submitBtn.addEventListener('click', async () => {
                 timerDisplay.innerHTML = `Waiting for other players... (<span id="timer-value">${remaining}</span>s)`;
                 
                 if (remaining <= 0) {
-                    clearInterval(waitingInterval);
+                    if (waitingInterval) {
+                        clearInterval(waitingInterval);
+                        waitingInterval = null;
+                    }
                 }
             };
             
             updateWaitingTimer();
-            const waitingInterval = setInterval(updateWaitingTimer, 1000);
+            waitingInterval = setInterval(updateWaitingTimer, 1000);
         });
 
         // Wait for all players or timeout
