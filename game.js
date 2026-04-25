@@ -3767,9 +3767,6 @@ function startPlayerCensus() {
         
         // Check if anyone left
         if (currentPlayerCount < lastKnownPlayerCount) {
-            const playersLost = lastKnownPlayerCount - currentPlayerCount;
-            
-            // Find who left
             const playersWhoLeft = [];
             lastKnownPlayers.forEach(playerName => {
                 if (!currentPlayers.has(playerName)) {
@@ -3783,64 +3780,51 @@ function startPlayerCensus() {
             const hostStillPresent = snapshot.docs.some(doc => doc.data().isCreator === true);
             
             if (!hostStillPresent) {
-                // Host left
-                console.log('Host has left the game');
+                // Host left - stop listening immediately
+                console.log('Host has left');
                 
-                // Get room state
+                if (playerCensusListener) {
+                    playerCensusListener();
+                    playerCensusListener = null;
+                }
+                
+                alert('Host has left. Returning to lobby.');
+                location.reload();
+                return;
+            } else {
+                // Guest(s) left
                 const roomDoc = await roomRef.get();
-                if (roomDoc.exists) {
-                    const roomData = roomDoc.data();
+                
+                if (!roomDoc.exists) {
+                    // Room was deleted
+                    if (playerCensusListener) {
+                        playerCensusListener();
+                        playerCensusListener = null;
+                    }
+                    alert('Room has been closed. Returning to lobby.');
+                    location.reload();
+                    return;
+                }
+                
+                const roomData = roomDoc.data();
+                
+                if (roomData.status === 'playing') {
+                    // During game - show notification
+                    showNotification(`${playersWhoLeft.join(', ')} disconnected (${currentPlayerCount} remaining)`);
                     
-                    if (roomData.status === 'waiting') {
-                        // In lobby - close the room
-                        alert('Host has left. Room is closing.');
-                        
-                        // Delete all players
-                        const deletePromises = snapshot.docs.map(doc => doc.ref.delete());
-                        await Promise.all(deletePromises);
-                        
-                        // Delete room
-                        await roomRef.delete();
-                        
-                        // Return to lobby
+                    // If only 1 player left (just me), end game
+                    if (currentPlayerCount === 1) {
+                        if (playerCensusListener) {
+                            playerCensusListener();
+                            playerCensusListener = null;
+                        }
+                        alert('All other players have disconnected. Returning to lobby.');
                         location.reload();
                         return;
-                    } else if (roomData.status === 'playing') {
-                        // During game - end game for everyone
-                        alert('Host has disconnected. Game is ending.');
-                        
-                        // Mark game as finished
-                        await roomRef.update({ status: 'finished' });
-                        
-                        // Don't reload yet - let showGameOver handle it
-                        return;
                     }
-                }
-            } else {
-                // Guest(s) left during game
-                if (roomRef) {
-                    const roomDoc = await roomRef.get();
-                    if (roomDoc.exists && roomDoc.data().status === 'playing') {
-                        // Show non-invasive notification
-                        showNotification(`${playersWhoLeft.join(', ')} disconnected (${currentPlayerCount} remaining)`);
-                        
-                        // If only host remains, end the game
-                        if (currentPlayerCount === 1) {
-                            alert('All other players have disconnected. Returning to lobby.');
-                            
-                            // Clean up and reload
-                            if (playerCensusListener) {
-                                playerCensusListener();
-                                playerCensusListener = null;
-                            }
-                            
-                            location.reload();
-                            return;
-                        }
-                    } else if (roomDoc.exists && roomDoc.data().status === 'waiting') {
-                        // Guest left during waiting - just show notification
-                        showNotification(`${playersWhoLeft.join(', ')} left the room`);
-                    }
+                } else if (roomData.status === 'waiting') {
+                    // In waiting room - just show notification
+                    showNotification(`${playersWhoLeft.join(', ')} left the room`);
                 }
             }
         }
@@ -3848,6 +3832,18 @@ function startPlayerCensus() {
         // Update our tracking
         lastKnownPlayerCount = currentPlayerCount;
         lastKnownPlayers = currentPlayers;
+        
+    }, (error) => {
+        // THIS IS CRITICAL - catches when room is deleted or connection lost
+        console.log('Census error (room deleted or connection lost):', error);
+        
+        if (playerCensusListener) {
+            playerCensusListener();
+            playerCensusListener = null;
+        }
+        
+        alert('Room has been closed. Returning to lobby.');
+        location.reload();
     });
 }
 
@@ -3896,7 +3892,7 @@ function stopPresenceUpdates() {
     }
 }
 
-// FIX 1: Host checks for stale players every 3 seconds
+// FIX 1: Host checks for stale players every 1 second (AGGRESSIVE)
 function startStalePlayerCheck() {
     if (!isRoomCreator || !playersRef) return;
     
@@ -3908,7 +3904,7 @@ function startStalePlayerCheck() {
         
         try {
             const now = Date.now();
-            const staleThreshold = 15000; // 15 seconds without update = stale
+            const staleThreshold = 5000; // 5 seconds without update = stale (AGGRESSIVE)
             
             const snapshot = await playersRef.get();
             
@@ -3919,7 +3915,7 @@ function startStalePlayerCheck() {
                 // Skip checking self
                 if (doc.id === playerName) continue;
                 
-                // If player hasn't updated in 15 seconds, remove them
+                // If player hasn't updated in 5 seconds, remove them
                 if (now - lastSeen > staleThreshold) {
                     console.log(`Removing stale player: ${doc.id}`);
                     await doc.ref.delete();
@@ -3928,7 +3924,7 @@ function startStalePlayerCheck() {
         } catch (error) {
             console.log('Stale check error:', error);
         }
-    }, 3000); // Check every 3 seconds
+    }, 1000); // Check every 1 second (AGGRESSIVE)
     
     // Store for cleanup
     window.staleCheckInterval = staleCheckInterval;
@@ -3966,10 +3962,10 @@ function startPresenceUpdates() {
     // Update immediately
     updatePlayerPresence();
     
-    // Then update every 5 seconds (CHANGED from 10)
+    // Then update every 2 seconds (FASTER)
     presenceUpdateInterval = setInterval(() => {
         updatePlayerPresence();
-    }, 5000); // CHANGED from 10000
+    }, 2000);
 }
 
 function stopPresenceUpdates() {
