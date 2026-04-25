@@ -753,7 +753,7 @@ leaveWaitingBtn.addEventListener('click', async () => {
     }
 });
 
-// Start round timer - WITH DEBUGGING
+// Start round timer - WITH PROPER DISPLAY RESET
 function startRoundTimer(seconds) {
     console.log('startRoundTimer called with seconds:', seconds);
     
@@ -764,6 +764,7 @@ function startRoundTimer(seconds) {
         roundTimerInstance = null;
     }
     
+    // RESET to clean timer display (not waiting message)
     timerDisplay.classList.remove('hidden', 'warning');
     timerDisplay.innerHTML = `Time: <span id="timer-value">${seconds}</span>s`;
     
@@ -775,8 +776,6 @@ function startRoundTimer(seconds) {
             if (timerValueSpan) {
                 timerValueSpan.textContent = remaining;
             }
-            
-            console.log('Desktop timer tick:', remaining); // This should appear
             
             // Warning animation at 10 seconds
             if (remaining <= 10) {
@@ -849,12 +848,14 @@ function listenForRoundChanges() {
     
     // Initialize with current round
     lastSeenRound = currentRound;
+    let isStartingNewRound = false; // Flag to prevent race conditions
     
     roundChangeListener = roomRef.onSnapshot((doc) => {
         const roomData = doc.data();
         
         // If room's current round is ahead of what we've processed, force advance
-        if (roomData.currentRound > lastSeenRound && roomData.currentRound > currentRound) {
+        if (roomData.currentRound > lastSeenRound && roomData.currentRound > currentRound && !isStartingNewRound) {
+            isStartingNewRound = true; // Set flag immediately
             console.log('Forced to advance to round', roomData.currentRound);
             lastSeenRound = roomData.currentRound;
             
@@ -884,9 +885,6 @@ function listenForRoundChanges() {
                 mobileSubmitBtn.style.opacity = '1';
                 mobileSubmitBtn.style.cursor = 'pointer';
                 
-                // RESET the submit button state
-                hasSubmittedThisRound = false;
-                
                 mobileClickPosition = null;
                 mobileCurrentSlice = 13;
                 mobileSliceSlider.value = 13;
@@ -901,33 +899,40 @@ function listenForRoundChanges() {
                     mobileRoundTimerInstance = null;
                 }
                 
-                // WAIT for roundStartTime to be set before starting timer
-                const waitForMobileTimer = setInterval(async () => {
-                    const freshDoc = await roomRef.get();
-                    const freshData = freshDoc.data();
+                // Wait for roundStartTime - only check once
+                if (roomData.roundStartTime) {
+                    startMobileTimer(roomData.timerSeconds);
+                    isStartingNewRound = false;
+                } else {
+                    // Poll for it
+                    const waitForMobileTimer = setInterval(async () => {
+                        const freshDoc = await roomRef.get();
+                        const freshData = freshDoc.data();
+                        
+                        if (freshData.roundStartTime) {
+                            clearInterval(waitForMobileTimer);
+                            startMobileTimer(freshData.timerSeconds);
+                            isStartingNewRound = false;
+                        }
+                    }, 100);
                     
-                    if (freshData.roundStartTime) {
+                    setTimeout(() => {
                         clearInterval(waitForMobileTimer);
-                        startMobileTimer(freshData.timerSeconds);
-                    }
-                }, 100);
-                
-                // Timeout after 5 seconds
-                setTimeout(() => clearInterval(waitForMobileTimer), 5000);
+                        isStartingNewRound = false;
+                    }, 5000);
+                }
             } else {
+                // Desktop
                 currentRoundDisplay.textContent = currentRound;
                 submitBtn.disabled = false;
                 submitBtn.style.opacity = '1';
                 submitBtn.style.cursor = 'pointer';
                 
-                // RESET the submit button state
-                hasSubmittedThisRound = false;
-                
-                // UPDATE SCORE DISPLAY HERE
+                // UPDATE SCORE DISPLAY
                 scoreDisplay.textContent = totalScore;
                 console.log('listenForRoundChanges updated score to:', totalScore);
                 
-                // RESET timer display to clean state
+                // RESET timer display
                 timerDisplay.classList.remove('hidden', 'warning');
                 timerDisplay.innerHTML = `Time: <span id="timer-value">--</span>s`;
                 
@@ -939,33 +944,28 @@ function listenForRoundChanges() {
                     roundTimerInstance = null;
                 }
                 
-                // WAIT for roundStartTime to be set before starting timer
-                let attempts = 0;
-                const waitForTimer = setInterval(async () => {
-                    attempts++;
-                    console.log(`Waiting for roundStartTime, attempt ${attempts}`);
+                // Wait for roundStartTime - only check once
+                if (roomData.roundStartTime) {
+                    startRoundTimer(roomData.timerSeconds);
+                    isStartingNewRound = false;
+                } else {
+                    // Poll for it
+                    const waitForTimer = setInterval(async () => {
+                        const freshDoc = await roomRef.get();
+                        const freshData = freshDoc.data();
+                        
+                        if (freshData.roundStartTime) {
+                            clearInterval(waitForTimer);
+                            startRoundTimer(freshData.timerSeconds);
+                            isStartingNewRound = false;
+                        }
+                    }, 100);
                     
-                    const freshDoc = await roomRef.get();
-                    const freshData = freshDoc.data();
-                    
-                    console.log('Round start time check:', {
-                        hasRoundStartTime: !!freshData.roundStartTime,
-                        currentRound: freshData.currentRound,
-                        timerSeconds: freshData.timerSeconds
-                    });
-                    
-                    if (freshData.roundStartTime) {
+                    setTimeout(() => {
                         clearInterval(waitForTimer);
-                        console.log('Found roundStartTime, starting timer');
-                        startRoundTimer(freshData.timerSeconds);
-                    }
-                }, 100);
-
-                // Timeout after 5 seconds
-                setTimeout(() => {
-                    clearInterval(waitForTimer);
-                    console.log('Timer wait timeout after 5 seconds');
-                }, 5000);
+                        isStartingNewRound = false;
+                    }, 5000);
+                }
             }
         }
         
