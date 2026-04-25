@@ -78,6 +78,7 @@ class ServerTimer {
         this.startTime = null;
         this.duration = null;
         this.isActive = false;
+        this.clockOffset = 0; // ADD THIS
     }
     
     start(duration) {
@@ -100,6 +101,15 @@ class ServerTimer {
             
             if (!serverStartTime) return;
             
+            // CALCULATE CLOCK OFFSET ONCE
+            if (this.clockOffset === 0 && data.roundStartTime) {
+                // Estimate server time vs local time
+                const serverNow = data.roundStartTime.toMillis();
+                const localNow = Date.now();
+                this.clockOffset = serverNow - localNow;
+                console.log('Clock offset detected:', this.clockOffset, 'ms');
+            }
+            
             // Only start interval once we have server time AND we haven't started yet
             if (!this.interval && serverStartTime && this.isActive) {
                 this.startTime = serverStartTime;
@@ -114,7 +124,8 @@ class ServerTimer {
                         return;
                     }
                     
-                    const now = Date.now();
+                    // USE CORRECTED TIME
+                    const now = Date.now() + this.clockOffset;
                     const elapsed = (now - this.startTime) / 1000;
                     const remaining = Math.max(0, Math.ceil(this.duration - elapsed));
                     
@@ -129,7 +140,7 @@ class ServerTimer {
                 updateTimer(); // Immediate update
                 this.interval = setInterval(updateTimer, 100);
                 
-                // IMPORTANT: Unsubscribe from snapshot NOW that we have what we need
+                // Unsubscribe from snapshot NOW that we have what we need
                 if (this.unsubscribe) {
                     this.unsubscribe();
                     this.unsubscribe = null;
@@ -150,6 +161,8 @@ class ServerTimer {
             this.unsubscribe();
             this.unsubscribe = null;
         }
+        
+        this.clockOffset = 0; // RESET FOR NEXT USE
     }
 }
 
@@ -163,6 +176,7 @@ class ResultsTimer {
         this.unsubscribe = null;
         this.startTime = null;
         this.duration = 15; // Always 15 seconds
+        this.clockOffset = 0; // ADD THIS
     }
     
     start() {
@@ -180,12 +194,22 @@ class ResultsTimer {
             
             if (!serverStartTime) return;
             
+            // CALCULATE CLOCK OFFSET ONCE
+            if (this.clockOffset === 0 && data.resultsStartTime) {
+                // Estimate server time vs local time
+                const serverNow = data.resultsStartTime.toMillis();
+                const localNow = Date.now();
+                this.clockOffset = serverNow - localNow;
+                console.log('Results timer clock offset detected:', this.clockOffset, 'ms');
+            }
+            
             // Only start interval once we have server time
             if (!this.interval && serverStartTime) {
                 this.startTime = serverStartTime;
                 
                 const updateTimer = () => {
-                    const now = Date.now();
+                    // USE CORRECTED TIME
+                    const now = Date.now() + this.clockOffset;
                     const elapsed = (now - this.startTime) / 1000;
                     const remaining = Math.max(0, Math.ceil(this.duration - elapsed));
                     
@@ -199,6 +223,12 @@ class ResultsTimer {
                 
                 updateTimer(); // Immediate update
                 this.interval = setInterval(updateTimer, 100); // Update every 100ms
+                
+                // Unsubscribe from snapshot NOW that we have what we need
+                if (this.unsubscribe) {
+                    this.unsubscribe();
+                    this.unsubscribe = null;
+                }
             }
         });
     }
@@ -212,6 +242,7 @@ class ResultsTimer {
             this.unsubscribe();
             this.unsubscribe = null;
         }
+        this.clockOffset = 0; // RESET FOR NEXT USE
     }
 }
 
@@ -1682,17 +1713,22 @@ function positionResultMarkers(allPlayersData = null) {
     correctMarker.style.left = correctX + 'px';
     correctMarker.style.top = correctY + 'px';
     
-    // Position player marker (red)
-    const playerX = imgOffsetX + (clickPosition.x * imgRect.width);
-    const playerY = imgOffsetY + (clickPosition.y * imgRect.height);
-    playerMarker.style.left = playerX + 'px';
-    playerMarker.style.top = playerY + 'px';
-    
-    // Set opacity based on whether player was on correct slice
-    if (clickPosition.slice === currentQuestion.slice) {
-        playerMarker.style.opacity = '1';
+    // Position player marker (red) - only if clickPosition exists
+    if (clickPosition) {
+        const playerX = imgOffsetX + (clickPosition.x * imgRect.width);
+        const playerY = imgOffsetY + (clickPosition.y * imgRect.height);
+        playerMarker.style.left = playerX + 'px';
+        playerMarker.style.top = playerY + 'px';
+        
+        // Set opacity based on whether player was on correct slice
+        if (clickPosition.slice === currentQuestion.slice) {
+            playerMarker.style.opacity = '1';
+        } else {
+            playerMarker.style.opacity = '0.3';
+        }
     } else {
-        playerMarker.style.opacity = '0.3';
+        // Hide player marker if no click position
+        playerMarker.style.opacity = '0';
     }
     
     // Clear previous opponent markers
@@ -4156,7 +4192,7 @@ function startPlayerCensus() {
     });
 }
 
-// Host checks for stale players (aggressive for fast detection)
+// Host checks for stale players (MORE AGGRESSIVE)
 function startHostStaleCheck() {
     if (!isRoomCreator || !playersRef) return;
     
@@ -4167,25 +4203,22 @@ function startHostStaleCheck() {
         }
         
         try {
-            // Get server timestamp by reading the room document
             const roomDoc = await roomRef.get();
             const serverNow = roomDoc.data().hostLastSeen?.toMillis();
             
-            // Skip if we don't have a server time reference yet
             if (!serverNow) return;
             
             const snapshot = await playersRef.get();
             
             for (const doc of snapshot.docs) {
-                if (doc.id === playerName) continue; // Skip self
+                if (doc.id === playerName) continue;
                 
                 const lastSeen = doc.data().lastSeen?.toMillis();
                 
-                // Skip if no lastSeen yet (player just joined)
                 if (!lastSeen) continue;
                 
-                // Remove if no update for 6 seconds (AGGRESSIVE, using server time)
-                if (serverNow - lastSeen > 6000) {
+                // REDUCE from 6000 to 4000 (4 seconds)
+                if (serverNow - lastSeen > 4000) {
                     console.log(`Removing stale player: ${doc.id} (${(serverNow - lastSeen)/1000}s stale)`);
                     await doc.ref.delete();
                 }
@@ -4193,12 +4226,11 @@ function startHostStaleCheck() {
         } catch (error) {
             console.log('Stale check error:', error);
         }
-    }, 2000); // Check every 2 seconds (AGGRESSIVE)
+    }, 1500); // REDUCE from 2000 to 1500ms (check every 1.5s)
     
     window.hostStaleCheck = checkInterval;
 }
 
-// Guest monitors host presence (for when host refreshes)
 function startGuestHostMonitor() {
     if (isRoomCreator || !playersRef) return;
     
@@ -4213,7 +4245,6 @@ function startGuestHostMonitor() {
             const hostDoc = snapshot.docs.find(doc => doc.data().isCreator === true);
             
             if (!hostDoc) {
-                // Host document gone
                 clearInterval(monitorInterval);
                 console.log('Host document deleted');
                 alert('Host has left. Returning to lobby.');
@@ -4224,18 +4255,15 @@ function startGuestHostMonitor() {
             const hostData = hostDoc.data();
             const hostLastSeen = hostData.lastSeen?.toMillis();
             
-            // Skip check if no lastSeen yet
             if (!hostLastSeen) return;
             
-            // Get server time reference from room document
             const roomDoc = await roomRef.get();
             const serverNow = roomDoc.data().hostLastSeen?.toMillis();
             
-            // Skip if we don't have a server time reference yet
             if (!serverNow) return;
             
-            // Remove host if stale for 6 seconds (AGGRESSIVE)
-            if (serverNow - hostLastSeen > 6000) {
+            // REDUCE from 6000 to 4000 (4 seconds)
+            if (serverNow - hostLastSeen > 4000) {
                 console.log(`Host stale for ${(serverNow - hostLastSeen)/1000}s`);
                 clearInterval(monitorInterval);
                 alert('Host has disconnected. Returning to lobby.');
@@ -4244,7 +4272,7 @@ function startGuestHostMonitor() {
         } catch (error) {
             console.log('Guest host monitor error:', error);
         }
-    }, 2000); // Check every 2 seconds (AGGRESSIVE)
+    }, 1500); // REDUCE from 2000 to 1500ms
     
     window.guestHostMonitor = monitorInterval;
 }
@@ -4272,37 +4300,33 @@ async function updatePlayerPresence() {
     }
 }
 
-// Start periodic presence updates (every 10 seconds)
+// Start periodic presence updates
 let presenceUpdateInterval = null;
 
 function startPresenceUpdates() {
-    // Clear any existing interval
     if (presenceUpdateInterval) {
         clearInterval(presenceUpdateInterval);
         presenceUpdateInterval = null;
     }
     
-    // Update immediately
     updatePlayerPresence();
     
-    // Also update host timestamp if we're the host
     if (isRoomCreator && roomRef) {
         roomRef.update({
             hostLastSeen: firebase.firestore.FieldValue.serverTimestamp()
         }).catch(err => console.log('Host timestamp update failed:', err));
     }
     
-    // Then update every 2 seconds (FAST)
+    // REDUCE from 2000 to 1000ms (update every 1 second)
     presenceUpdateInterval = setInterval(() => {
         updatePlayerPresence();
         
-        // Host also updates room's hostLastSeen
         if (isRoomCreator && roomRef) {
             roomRef.update({
                 hostLastSeen: firebase.firestore.FieldValue.serverTimestamp()
             }).catch(err => console.log('Host timestamp update failed:', err));
         }
-    }, 2000);
+    }, 1000); // 1 second updates
 }
 
 function stopPresenceUpdates() {
