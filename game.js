@@ -75,14 +75,20 @@ class ServerTimer {
         this.unsubscribe = null;
         this.startTime = null;
         this.duration = null;
+        this.isActive = false;
     }
     
     start(duration) {
-        this.stop(); // Clear any existing timer
+        if (this.isActive) {
+            console.warn('Timer already active, stopping first');
+            this.stop();
+        }
+        
+        this.isActive = true;
         
         // Listen to room for server timestamp
         this.unsubscribe = this.roomRef.onSnapshot((doc) => {
-            if (!doc.exists) {
+            if (!doc.exists || !this.isActive) {
                 this.stop();
                 return;
             }
@@ -93,11 +99,19 @@ class ServerTimer {
             if (!serverStartTime) return;
             
             // Only start interval once we have server time
-            if (!this.interval && serverStartTime) {
+            if (!this.interval && serverStartTime && this.isActive) {
                 this.startTime = serverStartTime;
                 this.duration = data.timerSeconds || duration;
                 
                 const updateTimer = () => {
+                    if (!this.isActive) {
+                        if (this.interval) {
+                            clearInterval(this.interval);
+                            this.interval = null;
+                        }
+                        return;
+                    }
+                    
                     const now = Date.now();
                     const elapsed = (now - this.startTime) / 1000;
                     const remaining = Math.max(0, Math.ceil(this.duration - elapsed));
@@ -111,16 +125,19 @@ class ServerTimer {
                 };
                 
                 updateTimer(); // Immediate update
-                this.interval = setInterval(updateTimer, 100); // Update every 100ms for smoothness
+                this.interval = setInterval(updateTimer, 100);
             }
         });
     }
     
     stop() {
+        this.isActive = false;
+        
         if (this.interval) {
             clearInterval(this.interval);
             this.interval = null;
         }
+        
         if (this.unsubscribe) {
             this.unsubscribe();
             this.unsubscribe = null;
@@ -192,6 +209,11 @@ class ResultsTimer {
 
 // Centralized leave room function - UPDATED with timer cleanup
 async function leaveRoom() {
+    // Stop guest host monitor
+    if (window.guestHostMonitor) {
+        clearInterval(window.guestHostMonitor);
+        window.guestHostMonitor = null;
+    }
     // Stop host stale check
     if (window.hostStaleCheck) {
         clearInterval(window.hostStaleCheck);
@@ -602,6 +624,9 @@ joinRoomSubmitBtn.addEventListener('click', async () => {
 
         // START PRESENCE UPDATES
         startPresenceUpdates();
+
+        // START GUEST HOST MONITOR (guest only)
+        startGuestHostMonitor();
 
         hideLobbyLoading();
 
@@ -3016,8 +3041,10 @@ function listenForMatchmaking() {
             // START PRESENCE UPDATES
             startPresenceUpdates();
 
-            // Keep matchmaking panel visible until game starts
-            // listenForGameStart will hide it when game begins
+            // START GUEST HOST MONITOR if not creator
+            if (!isRoomCreator) {
+                startGuestHostMonitor();
+            }
 
             // Listen for game start
             listenForGameStart();
@@ -3421,6 +3448,9 @@ mobileJoinBtn.addEventListener('click', async () => {
 
         // START PRESENCE UPDATES
         startPresenceUpdates();
+
+        // START GUEST HOST MONITOR (guest only)
+        startGuestHostMonitor();
         
         // Add leave button handler
         const mobileLeaveBtn = document.getElementById('mobile-leave-waiting-btn');
@@ -3975,7 +4005,7 @@ function startPlayerCensus() {
     });
 }
 
-// Host checks for stale players (faster for both lobby and game)
+// Host checks for stale players (aggressive for fast detection)
 function startHostStaleCheck() {
     if (!isRoomCreator || !playersRef) return;
     
@@ -3994,18 +4024,60 @@ function startHostStaleCheck() {
                 
                 const lastSeen = doc.data().lastSeen?.toMillis() || 0;
                 
-                // Remove if no update for 10 seconds (faster than before)
-                if (now - lastSeen > 10000) {
-                    console.log(`Removing stale player: ${doc.id}`);
+                // Remove if no update for 6 seconds (AGGRESSIVE)
+                if (now - lastSeen > 6000) {
+                    console.log(`Removing stale player: ${doc.id} (${(now - lastSeen)/1000}s stale)`);
                     await doc.ref.delete();
                 }
             }
         } catch (error) {
             console.log('Stale check error:', error);
         }
-    }, 3000); // Check every 3 seconds
+    }, 2000); // Check every 2 seconds (AGGRESSIVE)
     
     window.hostStaleCheck = checkInterval;
+}
+
+// Guest monitors host presence (for when host refreshes)
+function startGuestHostMonitor() {
+    if (isRoomCreator || !playersRef) return;
+    
+    const monitorInterval = setInterval(async () => {
+        if (!currentRoomCode || isRoomCreator) {
+            clearInterval(monitorInterval);
+            return;
+        }
+        
+        try {
+            const snapshot = await playersRef.get();
+            const hostDoc = snapshot.docs.find(doc => doc.data().isCreator === true);
+            
+            if (!hostDoc) {
+                // Host document gone
+                clearInterval(monitorInterval);
+                console.log('Host document deleted');
+                alert('Host has left. Returning to lobby.');
+                location.reload();
+                return;
+            }
+            
+            const hostData = hostDoc.data();
+            const hostLastSeen = hostData.lastSeen?.toMillis() || 0;
+            const now = Date.now();
+            
+            // Remove host if stale for 6 seconds
+            if (now - hostLastSeen > 6000) {
+                console.log(`Host stale for ${(now - hostLastSeen)/1000}s`);
+                clearInterval(monitorInterval);
+                alert('Host has disconnected. Returning to lobby.');
+                location.reload();
+            }
+        } catch (error) {
+            console.log('Guest host monitor error:', error);
+        }
+    }, 2000); // Check every 2 seconds
+    
+    window.guestHostMonitor = monitorInterval;
 }
 
 // Stop player census
@@ -4044,10 +4116,10 @@ function startPresenceUpdates() {
     // Update immediately
     updatePlayerPresence();
     
-    // Then update every 10 seconds
+    // Then update every 2 seconds (FAST)
     presenceUpdateInterval = setInterval(() => {
         updatePlayerPresence();
-    }, 10000);
+    }, 2000);
 }
 
 function stopPresenceUpdates() {
