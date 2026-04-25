@@ -748,8 +748,8 @@ function listenForGameStart() {
         console.log('[listenForGameStart] Room status changed:', roomData.status, 'hasGameStarted:', hasGameStarted);
         
         if (roomData.status === 'playing' && !hasGameStarted) {
-            console.log('[listenForGameStart] Starting game!');
-            hasGameStarted = true;
+            console.log('[listenForGameStart] Triggering game start');
+            // DON'T set hasGameStarted here - let startMultiplayerGame do it
             
             // Check if mobile
             if (isMobile) {
@@ -1039,14 +1039,13 @@ function listenForRoundChanges() {
     });
 }
 
-// Start multiplayer game for all players - UPDATED with player census
 async function startMultiplayerGame(roomData) {
     // Prevent double-starting
     if (hasGameStarted) {
         console.log('Game already started, ignoring duplicate call');
         return;
     }
-    hasGameStarted = true;
+    hasGameStarted = true;  // SET IT HERE, RIGHT AFTER THE CHECK
     
     console.log('startMultiplayerGame called');
     
