@@ -716,12 +716,15 @@ function startRoundTimer(seconds) {
                 timerValueSpan.textContent = remaining;
             }
             
+            console.log('Desktop timer tick:', remaining); // DEBUG
+            
             // Warning animation at 10 seconds
             if (remaining <= 10) {
                 timerDisplay.classList.add('warning');
             }
         },
         () => {
+            console.log('Desktop timer complete'); // DEBUG
             autoSubmitRound();
         }
     );
@@ -858,7 +861,10 @@ function listenForRoundChanges() {
                     
                     if (freshData.roundStartTime) {
                         clearInterval(waitForTimer);
+                        console.log('Round start time found:', freshData.roundStartTime.toDate()); // DEBUG
                         startRoundTimer(freshData.timerSeconds);
+                    } else {
+                        console.log('Waiting for roundStartTime...'); // DEBUG
                     }
                 }, 100);
                 
@@ -3480,12 +3486,15 @@ function startMobileTimer(seconds) {
         (remaining) => {
             mobileTimerValue.textContent = remaining;
             
+            console.log('Mobile timer tick:', remaining); // DEBUG
+            
             // Warning animation at 10 seconds
             if (remaining <= 10) {
                 timerElement.classList.add('warning');
             }
         },
         () => {
+            console.log('Mobile timer complete'); // DEBUG
             autoSubmitMobileRound();
         }
     );
@@ -3493,17 +3502,11 @@ function startMobileTimer(seconds) {
     mobileRoundTimerInstance.start(seconds);
 }
 
-// Stop mobile timer - UPDATED to clean up listener
+// Stop mobile timer - UPDATED to use new timer instance
 function stopMobileTimer() {
-    if (mobileTimer) {
-        clearInterval(mobileTimer);
-        mobileTimer = null;
-    }
-    
-    // Unsubscribe from room timer listener
-    if (window.mobileTimerUnsubscribe) {
-        window.mobileTimerUnsubscribe();
-        window.mobileTimerUnsubscribe = null;
+    if (mobileRoundTimerInstance) {
+        mobileRoundTimerInstance.stop();
+        mobileRoundTimerInstance = null;
     }
 }
 
@@ -3721,20 +3724,18 @@ function startPlayerCensus() {
             
             console.log('Players left:', playersWhoLeft);
             
-            // Check if it was the host
-            const hostLeft = playersWhoLeft.some(name => {
-                const playerDoc = snapshot.docs.find(doc => doc.id === name);
-                // If we can't find them, check our last known state
-                // Host is identified by isCreator field
-                return false; // We'll check this differently
-            });
-            
-            // Actually check if host is still in the room
+            // Check if host is still in the room
             const hostStillPresent = snapshot.docs.some(doc => doc.data().isCreator === true);
             
             if (!hostStillPresent) {
                 // Host left
                 console.log('Host has left the game');
+                
+                // Stop listening immediately to prevent multiple alerts
+                if (playerCensusListener) {
+                    playerCensusListener();
+                    playerCensusListener = null;
+                }
                 
                 // Get room state
                 const roomDoc = await roomRef.get();
@@ -3743,7 +3744,7 @@ function startPlayerCensus() {
                     
                     if (roomData.status === 'waiting') {
                         // In lobby - close the room
-                        alert('Host has left. Room is closing.');
+                        alert('Host has left. Returning to lobby.');
                         
                         // Delete all players
                         const deletePromises = snapshot.docs.map(doc => doc.ref.delete());
@@ -3765,6 +3766,11 @@ function startPlayerCensus() {
                         // Don't reload yet - let showGameOver handle it
                         return;
                     }
+                } else {
+                    // Room doesn't exist anymore (host closed it)
+                    alert('Room has been closed. Returning to lobby.');
+                    location.reload();
+                    return;
                 }
             } else {
                 // Guest(s) left during game
@@ -3776,14 +3782,13 @@ function startPlayerCensus() {
                         
                         // If only host remains, end the game
                         if (currentPlayerCount === 1) {
-                            alert('All other players have disconnected. Returning to lobby.');
-                            
-                            // Clean up and reload
+                            // Stop listening to prevent multiple alerts
                             if (playerCensusListener) {
                                 playerCensusListener();
                                 playerCensusListener = null;
                             }
                             
+                            alert('All other players have disconnected. Returning to lobby.');
                             location.reload();
                             return;
                         }
@@ -3798,6 +3803,19 @@ function startPlayerCensus() {
         // Update our tracking
         lastKnownPlayerCount = currentPlayerCount;
         lastKnownPlayers = currentPlayers;
+    }, (error) => {
+        // Error callback - handle when room is deleted
+        console.log('Census listener error (room likely deleted):', error);
+        
+        // Stop listening
+        if (playerCensusListener) {
+            playerCensusListener();
+            playerCensusListener = null;
+        }
+        
+        // Show single alert and reload
+        alert('Room has been closed. Returning to lobby.');
+        location.reload();
     });
 }
 
