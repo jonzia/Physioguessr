@@ -905,54 +905,32 @@ function listenForRoundChanges() {
     roundChangeListener = roomRef.onSnapshot(async (doc) => {
         const roomData = doc.data();
         
-        // Check if game is over (applies to all modes)
-        if (roomData.status === 'finished') {
-            console.log('Game finished!');
-            
-            stopListeningForSubmissions();
-            hideResultsModal();
-            
-            if (roundChangeListener) {
-                roundChangeListener();
-                roundChangeListener = null;
-            }
-            
-            showGameOver();
-            return;
-        }
-        
-        // ✅ CHANGE - Only process round changes in presenter mode
-        // Normal mode uses auto-advance timer, not this listener
-        if (!isPresenterMode) {
-            return; // Exit early for normal mode
-        }
-        
-        // === PRESENTER MODE ONLY BELOW THIS LINE ===
-        
-        // If room's current round is ahead, force advance (presenter mode only)
+        // If room's current round is ahead of what we've processed, force advance
         if (roomData.currentRound > lastSeenRound && roomData.currentRound > currentRound && !isStartingNewRound) {
             isStartingNewRound = true;
             console.log('Forced to advance to round', roomData.currentRound);
             lastSeenRound = roomData.currentRound;
             
-            // Skip for presenter (they control flow)
-            if (isRoomCreator) {
-                console.log('Presenter mode - ignoring round change sync');
+            // Skip for presenter (they control their own flow)
+            if (isPresenterMode && isRoomCreator) {
+                console.log('Presenter ignoring round change');
                 isStartingNewRound = false;
                 return;
             }
             
-            // Clean up intervals/timers
+            // CLEAR WAITING INTERVAL FROM PREVIOUS ROUND
             if (waitingInterval) {
                 clearInterval(waitingInterval);
                 waitingInterval = null;
             }
             
+            // Clean up results timer
             if (resultsTimerInstance) {
                 resultsTimerInstance.stop();
                 resultsTimerInstance = null;
             }
             
+            // Clean up any pending listeners/timeouts
             if (nextRoundListener) {
                 nextRoundListener();
                 nextRoundListener = null;
@@ -978,6 +956,7 @@ function listenForRoundChanges() {
                 updateMobileSlice();
                 mobileMarker.classList.remove('show');
                 
+                // CLEAR MOBILE WAITING INTERVAL FROM PREVIOUS ROUND
                 if (mobileWaitingInterval) {
                     clearInterval(mobileWaitingInterval);
                     mobileWaitingInterval = null;
@@ -985,15 +964,59 @@ function listenForRoundChanges() {
                 
                 loadNewQuestion();
                 
+                // STOP any existing timer first
                 if (mobileRoundTimerInstance) {
                     mobileRoundTimerInstance.stop();
                     mobileRoundTimerInstance = null;
                 }
                 
-                // No timer in presenter mode for mobile guests
-                mobileTimerValue.textContent = 'Waiting...';
-                isStartingNewRound = false;
+                // RESET mobile timer display
+                const mobileTimerElement = document.querySelector('.mobile-timer');
+                if (mobileTimerElement) {
+                    mobileTimerElement.classList.remove('warning');
+                }
+                mobileTimerValue.textContent = '--';
                 
+                // Check presenter mode
+                if (isPresenterMode) {
+                    // Presenter mode guest - no timer, sync score
+                    isStartingNewRound = false;
+                    
+                    // Sync score from server
+                    const myPlayerDoc = await playersRef.doc(playerName).get();
+                    if (myPlayerDoc.exists) {
+                        totalScore = myPlayerDoc.data().score || 0;
+                        console.log('Mobile synced score from server:', totalScore);
+                    }
+                } else {
+                    // Normal mode - Wait for roundStartTime
+                    if (roomData.roundStartTime) {
+                        isStartingNewRound = false;
+                        startMobileTimer(roomData.timerSeconds);
+                    } else {
+                        let pollCount = 0;
+                        const maxPolls = 50;
+                        const waitForMobileTimer = setInterval(async () => {
+                            pollCount++;
+                            
+                            if (pollCount >= maxPolls) {
+                                clearInterval(waitForMobileTimer);
+                                console.error('Timeout waiting for mobile roundStartTime');
+                                isStartingNewRound = false;
+                                return;
+                            }
+                            
+                            const freshDoc = await roomRef.get();
+                            const freshData = freshDoc.data();
+                            
+                            if (freshData.roundStartTime) {
+                                clearInterval(waitForMobileTimer);
+                                isStartingNewRound = false;
+                                startMobileTimer(freshData.timerSeconds);
+                            }
+                        }, 100);
+                    }
+                }
             } else {
                 // Desktop
                 currentRoundDisplay.textContent = currentRound;
@@ -1001,28 +1024,91 @@ function listenForRoundChanges() {
                 submitBtn.style.opacity = '1';
                 submitBtn.style.cursor = 'pointer';
                 
-                // Fetch updated score from server
-                const myPlayerDoc = await playersRef.doc(playerName).get();
-                if (myPlayerDoc.exists) {
-                    totalScore = myPlayerDoc.data().score || 0;
+                // Handle presenter mode
+                if (isPresenterMode && !isRoomCreator) {
+                    // Guest in presenter mode - sync score from server
+                    const myPlayerDoc = await playersRef.doc(playerName).get();
+                    if (myPlayerDoc.exists) {
+                        totalScore = myPlayerDoc.data().score || 0;
+                        scoreDisplay.textContent = totalScore;
+                        console.log('Desktop synced score from server:', totalScore);
+                    }
+                    
+                    // Keep timer hidden
+                    timerDisplay.classList.add('hidden');
+                } else {
+                    // Normal mode - UPDATE SCORE DISPLAY
                     scoreDisplay.textContent = totalScore;
-                    console.log('Synced score from server on round change:', totalScore);
+                    console.log('listenForRoundChanges updated score to:', totalScore);
+                    
+                    // RESET timer display PROPERLY
+                    timerDisplay.classList.remove('hidden', 'warning');
+                    timerDisplay.innerHTML = 'Time: <span id="timer-value">--</span>s';
                 }
-                
-                // Keep timer hidden for guests
-                timerDisplay.classList.add('hidden');
                 
                 loadNewQuestion();
                 
+                // STOP any existing timer first
                 if (roundTimerInstance) {
                     roundTimerInstance.stop();
                     roundTimerInstance = null;
                 }
                 
-                // Re-start listening for presenter results
-                isStartingNewRound = false;
-                listenForPresenterResults();
+                // Handle presenter mode
+                if (isPresenterMode && !isRoomCreator) {
+                    // Guest in presenter mode - no timer
+                    isStartingNewRound = false;
+                    listenForPresenterResults();
+                } else {
+                    // Normal mode - Wait for roundStartTime
+                    if (roomData.roundStartTime) {
+                        isStartingNewRound = false;
+                        startRoundTimer(roomData.timerSeconds);
+                    } else {
+                        let pollCount = 0;
+                        const maxPolls = 50;
+                        const waitForTimer = setInterval(async () => {
+                            pollCount++;
+                            
+                            if (pollCount >= maxPolls) {
+                                clearInterval(waitForTimer);
+                                console.error('Timeout waiting for desktop roundStartTime');
+                                isStartingNewRound = false;
+                                return;
+                            }
+                            
+                            const freshDoc = await roomRef.get();
+                            const freshData = freshDoc.data();
+                            
+                            if (freshData.roundStartTime) {
+                                clearInterval(waitForTimer);
+                                isStartingNewRound = false;
+                                startRoundTimer(freshData.timerSeconds);
+                            }
+                        }, 100);
+                    }
+                }
             }
+        }
+        
+        // Check if game is over
+        if (roomData.status === 'finished') {
+            console.log('Game finished!');
+            
+            // Stop presenter listeners
+            stopListeningForSubmissions();
+            
+            // Hide results modal if it's open
+            hideResultsModal();
+            
+            // Clean up listeners
+            if (roundChangeListener) {
+                roundChangeListener();
+                roundChangeListener = null;
+            }
+            
+            // Show game over screen
+            showGameOver();
         }
     });
 }
@@ -1227,8 +1313,10 @@ async function presenterContinue() {
         
         if (roundData) {
             // Force server read, not cache
+            console.log('Fetching fresh data for player:', doc.id, 'Current cached score:', data.score);
             const freshDoc = await playersRef.doc(doc.id).get({ source: 'server' });
             const freshData = freshDoc.data();
+            console.log('Fresh data retrieved, score:', freshData.score);
             const currentTotal = freshData.score || 0;
             
             // Add this round's score
