@@ -1094,9 +1094,11 @@ async function startMultiplayerGame(roomData) {
         window.hostPresenceChecker = null;
     }
     
-    // Hide ALL panels
+    // HIDE ALL PANELS - THIS IS THE IMPORTANT PART
+    lobbyScreen.style.display = 'none';  // Hide entire lobby
     createRoomPanel.classList.add('hidden');
     joinRoomPanel.classList.add('hidden');
+    
     const waitingPanel = document.getElementById('waiting-panel');
     if (waitingPanel) {
         waitingPanel.classList.add('hidden');
@@ -1107,6 +1109,10 @@ async function startMultiplayerGame(roomData) {
         startMobileGame(roomData);
         return;
     }
+    
+    // Show game container
+    gameContainer.classList.remove('hidden');
+    gameContainer.style.display = 'flex';
 
     // Ensure question sets are loaded
     if (!questionSetsData) {
