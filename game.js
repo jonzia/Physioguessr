@@ -65,7 +65,6 @@ let resultsTimerInstance = null;
 // SERVER-SYNCHRONIZED TIMER SYSTEM
 // ============================================
 
-// Universal timer that syncs with server timestamp
 class ServerTimer {
     constructor(roomRef, onTick, onComplete) {
         this.roomRef = roomRef;
@@ -98,7 +97,7 @@ class ServerTimer {
             
             if (!serverStartTime) return;
             
-            // Only start interval once we have server time
+            // Only start interval once we have server time AND we haven't started yet
             if (!this.interval && serverStartTime && this.isActive) {
                 this.startTime = serverStartTime;
                 this.duration = data.timerSeconds || duration;
@@ -126,6 +125,12 @@ class ServerTimer {
                 
                 updateTimer(); // Immediate update
                 this.interval = setInterval(updateTimer, 100);
+                
+                // IMPORTANT: Unsubscribe from snapshot NOW that we have what we need
+                if (this.unsubscribe) {
+                    this.unsubscribe();
+                    this.unsubscribe = null;
+                }
             }
         });
     }
