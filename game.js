@@ -61,6 +61,7 @@ let roundTimerInstance = null;
 let mobileRoundTimerInstance = null;
 let resultsTimerInstance = null;
 let waitingInterval = null;
+let mobileWaitingInterval = null;
 
 // ============================================
 // SERVER-SYNCHRONIZED TIMER SYSTEM
@@ -901,6 +902,12 @@ function listenForRoundChanges() {
                 mobileSliceSlider.value = 13;
                 updateMobileSlice();
                 mobileMarker.classList.remove('show');
+                
+                // CLEAR MOBILE WAITING INTERVAL FROM PREVIOUS ROUND
+                if (mobileWaitingInterval) {
+                    clearInterval(mobileWaitingInterval);
+                    mobileWaitingInterval = null;
+                }
                 
                 loadNewQuestion();
                 
@@ -3642,6 +3649,12 @@ mobileSubmitBtn.addEventListener('click', async () => {
     mobileSubmitBtn.style.opacity = '0.5';
     mobileSubmitBtn.style.cursor = 'not-allowed';
 
+    // CLEAR any existing mobile waiting interval first
+    if (mobileWaitingInterval) {
+        clearInterval(mobileWaitingInterval);
+        mobileWaitingInterval = null;
+    }
+
     // FIX 2: Keep timer counting down (don't change the display, just let it continue)
     roomRef.get().then((doc) => {
         if (!doc.exists) return;
@@ -3661,12 +3674,15 @@ mobileSubmitBtn.addEventListener('click', async () => {
             mobileTimerValue.textContent = `${remaining}s`;
             
             if (remaining <= 0) {
-                clearInterval(mobileWaitingInterval);
+                if (mobileWaitingInterval) {
+                    clearInterval(mobileWaitingInterval);
+                    mobileWaitingInterval = null;
+                }
             }
         };
         
         updateMobileWaitingTimer();
-        const mobileWaitingInterval = setInterval(updateMobileWaitingTimer, 1000);
+        mobileWaitingInterval = setInterval(updateMobileWaitingTimer, 1000);
     });
 
     // Wait for all players
