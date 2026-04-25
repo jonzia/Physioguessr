@@ -1725,7 +1725,7 @@ button:hover {
 /* Mobile Game Container */
 .mobile-game-container {
     width: 100%;
-    min-height: 100vh;
+    height: 100vh;
     background: #1a1a1a;
     display: flex;
     flex-direction: column;
@@ -1736,11 +1736,10 @@ button:hover {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 10px; /* REDUCE from 15px */
+    padding: 15px;
     background: #2a2a2a;
     border-radius: 10px;
-    margin-bottom: 10px; /* REDUCE from 15px */
-    flex-shrink: 0; /* Prevent shrinking */
+    margin-bottom: 15px;
 }
 
 .mobile-round {
@@ -1765,13 +1764,12 @@ button:hover {
     background: #000;
     border-radius: 10px;
     padding: 10px;
-    margin-bottom: 10px; /* REDUCE from 15px */
+    margin-bottom: 15px;
     flex: 1;
     display: flex;
     align-items: center;
     justify-content: center;
-    min-height: 0; /* Allow flexbox to shrink */
-    max-height: 50vh; /* Limit height */
+    overflow: hidden;
 }
 
 #mobile-brain-slice {
@@ -1799,11 +1797,10 @@ button:hover {
 
 .mobile-slice-control {
     background: #2a2a2a;
-    padding: 10px; /* REDUCE from 15px */
+    padding: 15px;
     border-radius: 10px;
-    margin-bottom: 10px; /* REDUCE from 15px */
+    margin-bottom: 15px;
     text-align: center;
-    flex-shrink: 0;
 }
 
 .mobile-slider {
@@ -1821,8 +1818,6 @@ button:hover {
 .mobile-actions {
     display: flex;
     gap: 10px;
-    flex-shrink: 0; /* Prevent buttons from being cut off */
-    padding-bottom: env(safe-area-inset-bottom, 10px); /* Safe area for iPhone notch */
 }
 
 .mobile-actions .mobile-btn {

@@ -592,7 +592,8 @@ joinRoomSubmitBtn.addEventListener('click', async () => {
             return;
         }
 
-        if (roomData.status !== 'waiting') {
+        // Only block joining if NOT presenter mode
+        if (roomData.status !== 'waiting' && !roomData.presenterMode) {
             joinError.textContent = 'Game already in progress';
             joinError.classList.remove('hidden');
             hideLobbyLoading();
@@ -4459,6 +4460,11 @@ function hideMobileResults() {
 // Start mobile game
 function startMobileGame(roomData) {
     console.log('Starting mobile game');
+
+    // Set presenter mode flag
+    isPresenterMode = roomData.presenterMode || false;
+    const isPresenter = isPresenterMode && isRoomCreator;
+    console.log('Mobile game - Presenter mode:', isPresenterMode, 'Is presenter:', isPresenter);
     
     // STOP HEARTBEAT MONITORING
     if (window.hostPresenceInterval) {
@@ -4664,18 +4670,28 @@ function startPlayerCensus() {
                         // Show non-invasive notification
                         showNotification(`${playersWhoLeft.join(', ')} disconnected (${currentPlayerCount} remaining)`);
                         
-                        // If only host remains, end the game
+                        // Check room data for presenter mode
                         if (currentPlayerCount === 1) {
-                            // Stop listening to prevent multiple alerts
-                            if (playerCensusListener) {
-                                playerCensusListener();
-                                playerCensusListener = null;
-                            }
-                            if (roomMonitor) roomMonitor();
+                            // Get room data to check presenter mode
+                            const roomDoc = await roomRef.get();
+                            const roomData = roomDoc.data();
+                            const isPresenterModeRoom = roomData.presenterMode || false;
                             
-                            alert('All other players have disconnected. Returning to lobby.');
-                            location.reload();
-                            return;
+                            if (!isPresenterModeRoom) {
+                                // Normal mode - end game when only 1 player left
+                                if (playerCensusListener) {
+                                    playerCensusListener();
+                                    playerCensusListener = null;
+                                }
+                                if (roomMonitor) roomMonitor();
+                                
+                                alert('All other players have disconnected. Returning to lobby.');
+                                location.reload();
+                                return;
+                            } else {
+                                // Presenter mode - game continues
+                                showNotification('All guests have left. Waiting for new players...');
+                            }
                         }
                     } else if (roomDoc.exists && roomDoc.data().status === 'waiting') {
                         // Guest left during waiting - just show notification
@@ -4710,11 +4726,9 @@ function startPlayerCensus() {
 function startHostStaleCheck() {
     if (!isRoomCreator || !playersRef) return;
     
-    // ADD - Don't run stale check in presenter mode
-    if (isPresenterMode) {
-        console.log('Presenter mode - skipping stale check');
-        return;
-    }
+    // MODIFY - Use longer timeout in presenter mode instead of disabling
+    const staleTimeout = isPresenterMode ? 30000 : 5000; // 30s for presenter, 5s for normal
+    const checkInterval_time = isPresenterMode ? 5000 : 1000; // Check every 5s in presenter mode
     
     const checkInterval = setInterval(async () => {
         if (!currentRoomCode || !isRoomCreator) {
@@ -4728,12 +4742,8 @@ function startHostStaleCheck() {
             
             const estimatedServerNow = Date.now() + globalClockOffset;
             
-            console.log('🔍 Stale check - Estimated server time:', new Date(estimatedServerNow));
-            
             for (const doc of snapshot.docs) {
-                // Skip self - make sure playerName matches doc.id
                 if (doc.id === playerName) {
-                    console.log('⏭️ Skipping self:', doc.id); // ✅ ADD THIS LOG
                     continue;
                 }
                 
@@ -4741,16 +4751,13 @@ function startHostStaleCheck() {
                 const lastSeen = playerData.lastSeen?.toMillis();
                 
                 if (!lastSeen) {
-                    console.log('⏳', doc.id, 'has no lastSeen yet');
                     continue;
                 }
                 
                 const staleTime = estimatedServerNow - lastSeen;
                 
-                console.log('⏱️', doc.id, 'last seen', Math.round(staleTime), 'ms ago');
-                
-                // Remove if stale for more than 5 seconds
-                if (staleTime > 5000) {
+                // USE VARIABLE TIMEOUT
+                if (staleTime > staleTimeout) {
                     console.log(`🗑️ Removing stale player: ${doc.id} (${Math.round(staleTime/1000)}s stale)`);
                     await doc.ref.delete();
                 }
@@ -4758,7 +4765,7 @@ function startHostStaleCheck() {
         } catch (error) {
             console.log('Stale check error:', error);
         }
-    }, 1000); // Check every 1 second
+    }, checkInterval_time);
     
     window.hostStaleCheck = checkInterval;
 }
@@ -4766,11 +4773,9 @@ function startHostStaleCheck() {
 function startGuestHostMonitor() {
     if (isRoomCreator || !playersRef) return;
     
-    // ADD - Don't run host monitor in presenter mode
-    if (isPresenterMode) {
-        console.log('Presenter mode - skipping host monitor');
-        return;
-    }
+    // MODIFY - Use longer timeout in presenter mode
+    const staleTimeout = isPresenterMode ? 30000 : 5000;
+    const checkInterval_time = isPresenterMode ? 5000 : 1000;
     
     const monitorInterval = setInterval(async () => {
         if (!currentRoomCode || isRoomCreator) {
@@ -4794,18 +4799,14 @@ function startGuestHostMonitor() {
             const hostLastSeen = hostData.lastSeen?.toMillis();
             
             if (!hostLastSeen) {
-                console.log('⏳ Host has no lastSeen yet');
                 return;
             }
             
-            // Use local time + clock offset to estimate staleness
             const estimatedServerNow = Date.now() + globalClockOffset;
             const staleTime = estimatedServerNow - hostLastSeen;
             
-            console.log('⏱️ Host last seen', Math.round(staleTime), 'ms ago');
-            
-            // Remove host if stale for more than 5 seconds
-            if (staleTime > 5000) {
+            // USE VARIABLE TIMEOUT
+            if (staleTime > staleTimeout) {
                 console.log(`🗑️ Host stale for ${Math.round(staleTime/1000)}s`);
                 clearInterval(monitorInterval);
                 alert('Host has disconnected. Returning to lobby.');
@@ -4814,7 +4815,7 @@ function startGuestHostMonitor() {
         } catch (error) {
             console.log('Guest host monitor error:', error);
         }
-    }, 1000);
+    }, checkInterval_time);
     
     window.guestHostMonitor = monitorInterval;
 }
