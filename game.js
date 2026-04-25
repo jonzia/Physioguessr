@@ -705,8 +705,7 @@ startGameBtn.addEventListener('click', async () => {
     const questionIds = questions.map(q => q.id);
     const shuffled = questionIds.sort(() => Math.random() - 0.5).slice(0, 5);
     
-    // RESET hasGameStarted flag
-    hasGameStarted = false;
+    // DON'T reset hasGameStarted here - we'll let startMultiplayerGame do it
     
     // UPDATED: Set roundStartTime when starting game
     await roomRef.update({
@@ -1936,9 +1935,21 @@ function waitForAllSubmissions() {
             }));
             
             // Calculate this player's score for results modal
-            const myData = allPlayersData.find(p => p.id === playerName);  // CHANGE from p.name
+            const myData = allPlayersData.find(p => p.id === playerName);
+
+            if (!myData) {
+                console.error('Could not find my player data! playerName:', playerName);
+                console.error('allPlayersData:', allPlayersData);
+                return;
+            }
+
             const myRoundData = myData[`round${currentRound}`];
-            
+
+            if (!myRoundData) {
+                console.error('Could not find my round data! currentRound:', currentRound);
+                return;
+            }
+
             showResultsModal(myRoundData.score, myRoundData.distance, allPlayersData);
             
             // Start the 15-second auto-advance timer
