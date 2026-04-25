@@ -902,7 +902,7 @@ function listenForRoundChanges() {
     lastSeenRound = currentRound;
     let isStartingNewRound = false; // Flag to prevent race conditions
     
-    roundChangeListener = roomRef.onSnapshot((doc) => {
+    roundChangeListener = roomRef.onSnapshot(async (doc) => {
         const roomData = doc.data();
         
         // If room's current round is ahead of what we've processed, force advance
