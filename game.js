@@ -851,8 +851,12 @@ function listenForRoundChanges() {
             if (isMobile) {
                 mobileRound.textContent = currentRound;
                 mobileSubmitBtn.disabled = false;
-                mobileSubmitBtn.style.opacity = '1';  // ADD THIS - reset opacity
-                mobileSubmitBtn.style.cursor = 'pointer';  // ADD THIS - reset cursor
+                mobileSubmitBtn.style.opacity = '1';
+                mobileSubmitBtn.style.cursor = 'pointer';
+                
+                // RESET the submit button state
+                hasSubmittedThisRound = false;
+                
                 mobileClickPosition = null;
                 mobileCurrentSlice = 13;
                 mobileSliceSlider.value = 13;
@@ -883,12 +887,19 @@ function listenForRoundChanges() {
             } else {
                 currentRoundDisplay.textContent = currentRound;
                 submitBtn.disabled = false;
-                submitBtn.style.opacity = '1';  // ADD THIS - reset opacity
-                submitBtn.style.cursor = 'pointer';  // ADD THIS - reset cursor
+                submitBtn.style.opacity = '1';
+                submitBtn.style.cursor = 'pointer';
+                
+                // RESET the submit button state
+                hasSubmittedThisRound = false;
                 
                 // UPDATE SCORE DISPLAY HERE
                 scoreDisplay.textContent = totalScore;
                 console.log('listenForRoundChanges updated score to:', totalScore);
+                
+                // RESET timer display to clean state
+                timerDisplay.classList.remove('hidden', 'warning');
+                timerDisplay.innerHTML = `Time: <span id="timer-value">--</span>s`;
                 
                 loadNewQuestion();
                 
