@@ -4199,20 +4199,12 @@ function startHostStaleCheck() {
         }
         
         try {
-            // Get a fresh server timestamp by reading ANY recent server timestamp
-            const roomDoc = await roomRef.get();
+            // FORCE FRESH READ FROM SERVER (not cache)
+            const snapshot = await playersRef.get({ source: 'server' }); // ✅ ADD THIS
             
-            // Use the room's own metadata timestamp as reference
-            const roomUpdateTime = roomDoc.updateTime?.toMillis() || roomDoc.createTime?.toMillis();
+            const estimatedServerNow = Date.now() + globalClockOffset;
             
-            if (!roomUpdateTime) {
-                console.log('⚠️ No server time reference yet');
-                return;
-            }
-            
-            const snapshot = await playersRef.get();
-            
-            console.log('🔍 Stale check - Reference time:', new Date(roomUpdateTime));
+            console.log('🔍 Stale check - Estimated server time:', new Date(estimatedServerNow));
             
             for (const doc of snapshot.docs) {
                 if (doc.id === playerName) continue;
@@ -4225,23 +4217,11 @@ function startHostStaleCheck() {
                     continue;
                 }
                 
-                // Calculate how long ago relative to the document's own update time
-                // This avoids the timestamp drift issue
-                const playerUpdateTime = doc.updateTime?.toMillis();
-                
-                if (!playerUpdateTime) {
-                    console.log('⚠️', doc.id, 'has no updateTime');
-                    continue;
-                }
-                
-                // Use current local time to estimate staleness
-                // Add a buffer since we update every 1 second
-                const estimatedServerNow = Date.now() + globalClockOffset;
                 const staleTime = estimatedServerNow - lastSeen;
                 
                 console.log('⏱️', doc.id, 'last seen', Math.round(staleTime), 'ms ago');
                 
-                // Remove if stale for more than 5 seconds (buffer for network delay)
+                // Remove if stale for more than 5 seconds
                 if (staleTime > 5000) {
                     console.log(`🗑️ Removing stale player: ${doc.id} (${Math.round(staleTime/1000)}s stale)`);
                     await doc.ref.delete();
