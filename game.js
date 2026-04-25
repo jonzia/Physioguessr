@@ -766,7 +766,6 @@ function startRoundTimer(seconds) {
     
     // RESET to clean timer display (not waiting message)
     timerDisplay.classList.remove('hidden', 'warning');
-    timerDisplay.innerHTML = `Time: <span id="timer-value">${seconds}</span>s`;
     
     console.log('Creating new ServerTimer instance');
     roundTimerInstance = new ServerTimer(
@@ -1247,11 +1246,19 @@ function waitForNextRound() {
                 hideResultsModal();
                 await roomRef.update({ status: 'finished' });
             } else {
+                // Clear roundStartTime first, then set it
                 await roomRef.update({ 
                     currentRound: currentRound + 1,
-                    roundStartTime: firebase.firestore.FieldValue.serverTimestamp(),
-                    resultsStartTime: null // Clear for next round
+                    roundStartTime: null,  // Clear it first
+                    resultsStartTime: null
                 });
+                
+                // Then set the new roundStartTime in a separate update
+                setTimeout(async () => {
+                    await roomRef.update({
+                        roundStartTime: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                }, 100);
             }
         }
     );
@@ -1291,9 +1298,15 @@ function waitForNextRound() {
             } else {
                 await roomRef.update({ 
                     currentRound: currentRound + 1,
-                    roundStartTime: firebase.firestore.FieldValue.serverTimestamp(),
-                    resultsStartTime: null // Clear for next round
+                    roundStartTime: null,
+                    resultsStartTime: null
                 });
+                
+                setTimeout(async () => {
+                    await roomRef.update({
+                        roundStartTime: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                }, 100);
             }
         }
     });
