@@ -1440,6 +1440,9 @@ button:hover {
    ============================================ */
 
 .mobile-waiting-panel {
+    position: fixed;
+    top: 0;
+    left: 0;
     width: 100%;
     min-height: 100vh;
     background: #1a1a1a;
@@ -1447,6 +1450,11 @@ button:hover {
     justify-content: center;
     align-items: center;
     padding: 20px;
+    z-index: 300;
+}
+
+.mobile-waiting-panel.hidden {
+    display: none !important;
 }
 
 .mobile-waiting-container {

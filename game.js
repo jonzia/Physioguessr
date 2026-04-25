@@ -3739,15 +3739,24 @@ function startMobileGame(roomData) {
         window.hostPresenceInterval = null;
     }
     
+    if (window.hostPresenceChecker) {
+        clearInterval(window.hostPresenceChecker);
+        window.hostPresenceChecker = null;
+    }
+    
     // Hide mobile lobby AND waiting panel
     mobileLobby.classList.add('hidden');
+    mobileLobby.style.display = 'none';  // FORCE HIDE
+    
     const mobileWaitingPanel = document.getElementById('mobile-waiting-panel');
     if (mobileWaitingPanel) {
         mobileWaitingPanel.classList.add('hidden');
+        mobileWaitingPanel.style.display = 'none';  // FORCE HIDE
     }
     
     // Show game container
     mobileGameContainer.classList.remove('hidden');
+    mobileGameContainer.style.display = 'flex';  // FORCE SHOW
     
     // Reset state
     currentRound = 1;
