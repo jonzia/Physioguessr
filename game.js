@@ -1289,6 +1289,34 @@ async function presenterContinue() {
     const playersSnapshot = await playersRef.get();
     const players = playersSnapshot.docs;
     
+    // Calculate and update total scores for all guests
+    for (const doc of players) {
+        const data = doc.data();
+        
+        // Skip presenter
+        if (data.isCreator) continue;
+        
+        const roundData = data[`round${currentRound}`];
+        
+        if (roundData) {
+            // Get current total score
+            const currentTotal = data.score || 0;
+            
+            // Add this round's score
+            const newTotal = currentTotal + roundData.score;
+            
+            // Update in Firebase
+            await playersRef.doc(doc.id).update({
+                score: newTotal
+            });
+            
+            console.log(`Updated ${data.name} total score: ${currentTotal} + ${roundData.score} = ${newTotal}`);
+        } else {
+            // Player didn't submit this round - no change to score
+            console.log(`${data.name} didn't submit for round ${currentRound}`);
+        }
+    }
+    
     // Show results for everyone
     await roomRef.update({
         resultsStartTime: firebase.firestore.FieldValue.serverTimestamp(),
@@ -1303,8 +1331,9 @@ async function presenterContinue() {
     const questions = getQuestionsFromSet(setId);
     const question = questions.find(q => q.id === questionId);
     
-    // Get all players' data
-    const allPlayersData = players.map(doc => ({
+    // Get all players' data (with updated scores)
+    const updatedPlayersSnapshot = await playersRef.get();
+    const allPlayersData = updatedPlayersSnapshot.docs.map(doc => ({
         id: doc.id,
         name: doc.data().name,
         ...doc.data()
@@ -2202,11 +2231,16 @@ async function showGameOver() {
         // Get final leaderboard
         if (currentRoomCode && playersRef) {
             const playersSnapshot = await playersRef.get();
-            const allPlayersData = playersSnapshot.docs.map(doc => ({
+            let allPlayersData = playersSnapshot.docs.map(doc => ({
                 id: doc.id,
                 name: doc.data().name,
                 ...doc.data()
             }));
+            
+            // ilter out presenter in presenter mode
+            if (isPresenterMode) {
+                allPlayersData = allPlayersData.filter(player => !player.isCreator);
+            }
             
             // Sort by score
             const sortedPlayers = allPlayersData.sort((a, b) => b.score - a.score);
@@ -2533,7 +2567,15 @@ submitBtn.addEventListener('click', async () => {
     // Score: max 1000 points, decreases with distance
     const score = Math.max(0, Math.round(1000 * Math.exp(-distance * 3)));
 
-    totalScore += score;
+    if (!isPresenterMode) {
+        totalScore += score;
+    }
+
+    // Update display for single-player immediately
+    if (!currentRoomCode) {
+        scoreDisplay.textContent = totalScore;
+        console.log('Updated score display to:', totalScore);
+    }
 
     // Update display for single-player immediately
     if (!currentRoomCode) {
@@ -4240,7 +4282,12 @@ mobileSubmitBtn.addEventListener('click', async () => {
     const distance = Math.sqrt(dx*dx + dy*dy + dz*dz);
     const score = Math.max(0, Math.round(1000 * Math.exp(-distance * 3)));
     
-    totalScore += score;
+    if (!isPresenterMode) {
+        totalScore += score;
+    }
+    
+    // Save to Firebase
+    hasSubmittedThisRound = true;
     
     // Save to Firebase
     hasSubmittedThisRound = true;
