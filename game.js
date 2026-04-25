@@ -192,6 +192,11 @@ class ResultsTimer {
 
 // Centralized leave room function - UPDATED with timer cleanup
 async function leaveRoom() {
+    // Stop host stale check
+    if (window.hostStaleCheck) {
+        clearInterval(window.hostStaleCheck);
+        window.hostStaleCheck = null;
+    }
     
     // Stop player census
     stopPlayerCensus();
@@ -450,6 +455,8 @@ createRoomBtn.addEventListener('click', async () => {
 
     // START PRESENCE UPDATES
     startPresenceUpdates();
+
+    startHostStaleCheck();
 
     console.log('Room created:', roomCode);
 });
@@ -3925,6 +3932,39 @@ function startPlayerCensus() {
         alert('Room has been closed. Returning to lobby.');
         location.reload();
     });
+}
+
+// Host checks for stale players (minimal, efficient)
+function startHostStaleCheck() {
+    if (!isRoomCreator || !playersRef) return;
+    
+    const checkInterval = setInterval(async () => {
+        if (!currentRoomCode || !isRoomCreator) {
+            clearInterval(checkInterval);
+            return;
+        }
+        
+        try {
+            const now = Date.now();
+            const snapshot = await playersRef.get();
+            
+            for (const doc of snapshot.docs) {
+                if (doc.id === playerName) continue; // Skip self
+                
+                const lastSeen = doc.data().lastSeen?.toMillis() || 0;
+                
+                // Remove if no update for 15 seconds
+                if (now - lastSeen > 15000) {
+                    console.log(`Removing stale player: ${doc.id}`);
+                    await doc.ref.delete();
+                }
+            }
+        } catch (error) {
+            console.log('Stale check error:', error);
+        }
+    }, 5000); // Check every 5 seconds
+    
+    window.hostStaleCheck = checkInterval;
 }
 
 // Stop player census
