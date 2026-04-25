@@ -1096,9 +1096,11 @@ async function startMultiplayerGame(roomData) {
     lobbyScreen.remove();
     gameContainer.classList.remove('hidden');
     gameContainer.style.display = 'flex';
-    
+
     // Display player name
-    playerNameDisplay.textContent = playerName;
+    const playerDoc = await playersRef.doc(playerName).get();
+    const displayName = playerDoc.exists ? playerDoc.data().name : playerName;
+    playerNameDisplay.textContent = displayName;
     
     // Update end game button text based on role
     if (isRoomCreator) {
@@ -1566,7 +1568,7 @@ function updateLeaderboard(allPlayersData) {
         item.className = 'leaderboard-item';
         
         // Highlight current player
-        if (player.name === playerName) {
+        if (player.id === playerName) {
             item.classList.add('current-player');
         }
         
@@ -1687,7 +1689,7 @@ function positionResultMarkers(allPlayersData = null) {
     // Add opponent markers (yellow)
     if (allPlayersData && currentRoomCode) {
         allPlayersData.forEach(player => {
-            if (player.name === playerName) return; // Skip self
+            if (player.id === playerName) return; // Skip self
             
             const roundData = player[`round${currentRound}`];
             if (!roundData) return;
@@ -1745,7 +1747,8 @@ async function showGameOver() {
         if (currentRoomCode && playersRef) {
             const playersSnapshot = await playersRef.get();
             const allPlayersData = playersSnapshot.docs.map(doc => ({
-                name: doc.id,
+                id: doc.id,  // ADD THIS - internal identifier
+                name: doc.data().name,  // CHANGE from doc.id - display name
                 ...doc.data()
             }));
             
@@ -1759,7 +1762,7 @@ async function showGameOver() {
                 const item = document.createElement('div');
                 item.className = 'mobile-leaderboard-item';
                 
-                if (player.name === playerName) {
+                if (player.id === playerName) {
                     item.classList.add('current');
                 }
                 
@@ -1910,12 +1913,13 @@ function waitForAllSubmissions() {
             
             // Get all players' data
             const allPlayersData = players.map(doc => ({
-                name: doc.id,
+                id: doc.id,  // ADD THIS
+                name: doc.data().name,  // CHANGE from doc.id
                 ...doc.data()
             }));
             
             // Calculate this player's score for results modal
-            const myData = allPlayersData.find(p => p.name === playerName);
+            const myData = allPlayersData.find(p => p.id === playerName);  // CHANGE from p.name
             const myRoundData = myData[`round${currentRound}`];
             
             showResultsModal(myRoundData.score, myRoundData.distance, allPlayersData);
@@ -3110,6 +3114,9 @@ function listenForMatchmaking() {
             const playerDocId = doc.id;
             playerName = playerDocId;  // THIS IS KEY - use queue doc ID as player identifier
 
+            // RESET game started flag
+            hasGameStarted = false;  // ADD THIS LINE
+
             // Check if we're the creator
             const playerDoc = await playersRef.doc(playerDocId).get();
             if (playerDoc.exists) {
@@ -3817,7 +3824,7 @@ function updateMobileLeaderboard(allPlayersData) {
         const item = document.createElement('div');
         item.className = 'mobile-leaderboard-item';
         
-        if (player.name === playerName) {
+        if (player.id === playerName) {
             item.classList.add('current');
         }
         
