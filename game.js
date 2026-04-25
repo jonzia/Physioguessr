@@ -724,6 +724,8 @@ if (isRoomCreator) {
 }
 
 function listenForGameStart() {
+    console.log('[listenForGameStart] Setting up listener, hasGameStarted:', hasGameStarted);
+    
     roomRef.onSnapshot((doc) => {
         // Check if room still exists
         if (!doc.exists) {
@@ -732,9 +734,10 @@ function listenForGameStart() {
         }
         
         const roomData = doc.data();
-        console.log('Room status changed:', roomData.status);
+        console.log('[listenForGameStart] Room status changed:', roomData.status, 'hasGameStarted:', hasGameStarted);
         
         if (roomData.status === 'playing' && !hasGameStarted) {
+            console.log('[listenForGameStart] Starting game!');
             hasGameStarted = true;
             
             // Check if mobile
@@ -4139,17 +4142,26 @@ function startHostStaleCheck() {
         }
         
         try {
-            const now = Date.now();
+            // Get server timestamp by reading the room document
+            const roomDoc = await roomRef.get();
+            const serverNow = roomDoc.data().hostLastSeen?.toMillis();
+            
+            // Skip if we don't have a server time reference yet
+            if (!serverNow) return;
+            
             const snapshot = await playersRef.get();
             
             for (const doc of snapshot.docs) {
                 if (doc.id === playerName) continue; // Skip self
                 
-                const lastSeen = doc.data().lastSeen?.toMillis() || 0;
+                const lastSeen = doc.data().lastSeen?.toMillis();
                 
-                // Remove if no update for 6 seconds (AGGRESSIVE)
-                if (now - lastSeen > 6000) {
-                    console.log(`Removing stale player: ${doc.id} (${(now - lastSeen)/1000}s stale)`);
+                // Skip if no lastSeen yet (player just joined)
+                if (!lastSeen) continue;
+                
+                // Remove if no update for 6 seconds (AGGRESSIVE, using server time)
+                if (serverNow - lastSeen > 6000) {
+                    console.log(`Removing stale player: ${doc.id} (${(serverNow - lastSeen)/1000}s stale)`);
                     await doc.ref.delete();
                 }
             }
@@ -4185,12 +4197,21 @@ function startGuestHostMonitor() {
             }
             
             const hostData = hostDoc.data();
-            const hostLastSeen = hostData.lastSeen?.toMillis() || 0;
-            const now = Date.now();
+            const hostLastSeen = hostData.lastSeen?.toMillis();
             
-            // Remove host if stale for 6 seconds
-            if (now - hostLastSeen > 6000) {
-                console.log(`Host stale for ${(now - hostLastSeen)/1000}s`);
+            // Skip check if no lastSeen yet
+            if (!hostLastSeen) return;
+            
+            // Get server time reference from room document
+            const roomDoc = await roomRef.get();
+            const serverNow = roomDoc.data().hostLastSeen?.toMillis();
+            
+            // Skip if we don't have a server time reference yet
+            if (!serverNow) return;
+            
+            // Remove host if stale for 6 seconds (AGGRESSIVE)
+            if (serverNow - hostLastSeen > 6000) {
+                console.log(`Host stale for ${(serverNow - hostLastSeen)/1000}s`);
                 clearInterval(monitorInterval);
                 alert('Host has disconnected. Returning to lobby.');
                 location.reload();
@@ -4198,7 +4219,7 @@ function startGuestHostMonitor() {
         } catch (error) {
             console.log('Guest host monitor error:', error);
         }
-    }, 2000); // Check every 2 seconds
+    }, 2000); // Check every 2 seconds (AGGRESSIVE)
     
     window.guestHostMonitor = monitorInterval;
 }
@@ -4239,17 +4260,24 @@ function startPresenceUpdates() {
     // Update immediately
     updatePlayerPresence();
     
+    // Also update host timestamp if we're the host
+    if (isRoomCreator && roomRef) {
+        roomRef.update({
+            hostLastSeen: firebase.firestore.FieldValue.serverTimestamp()
+        }).catch(err => console.log('Host timestamp update failed:', err));
+    }
+    
     // Then update every 2 seconds (FAST)
     presenceUpdateInterval = setInterval(() => {
         updatePlayerPresence();
+        
+        // Host also updates room's hostLastSeen
+        if (isRoomCreator && roomRef) {
+            roomRef.update({
+                hostLastSeen: firebase.firestore.FieldValue.serverTimestamp()
+            }).catch(err => console.log('Host timestamp update failed:', err));
+        }
     }, 2000);
-}
-
-function stopPresenceUpdates() {
-    if (presenceUpdateInterval) {
-        clearInterval(presenceUpdateInterval);
-        presenceUpdateInterval = null;
-    }
 }
 
 // Stop player census
