@@ -728,40 +728,43 @@ leaveWaitingBtn.addEventListener('click', async () => {
     }
 });
 
-// Start round timer - SIMPLIFIED with ServerTimer
+// Start round timer - FIXED to prevent duplicate listeners
 function startRoundTimer(seconds) {
     console.log('startRoundTimer called with seconds:', seconds);
     
-    // Stop any existing timer
+    // CRITICAL: Stop any existing timer AND its listener first
     if (roundTimerInstance) {
+        console.log('Stopping existing round timer');
         roundTimerInstance.stop();
+        roundTimerInstance = null;
     }
     
     timerDisplay.classList.remove('hidden', 'warning');
     timerDisplay.innerHTML = `Time: <span id="timer-value">${seconds}</span>s`;
     
-    roundTimerInstance = new ServerTimer(
-        roomRef,
-        (remaining) => {
-            const timerValueSpan = document.getElementById('timer-value');
-            if (timerValueSpan) {
-                timerValueSpan.textContent = remaining;
+    // Small delay to ensure old listener is fully cleaned up
+    setTimeout(() => {
+        roundTimerInstance = new ServerTimer(
+            roomRef,
+            (remaining) => {
+                const timerValueSpan = document.getElementById('timer-value');
+                if (timerValueSpan) {
+                    timerValueSpan.textContent = remaining;
+                }
+                
+                // Warning animation at 10 seconds
+                if (remaining <= 10) {
+                    timerDisplay.classList.add('warning');
+                }
+            },
+            () => {
+                console.log('Desktop timer complete');
+                autoSubmitRound();
             }
-            
-            console.log('Desktop timer tick:', remaining); // DEBUG
-            
-            // Warning animation at 10 seconds
-            if (remaining <= 10) {
-                timerDisplay.classList.add('warning');
-            }
-        },
-        () => {
-            console.log('Desktop timer complete'); // DEBUG
-            autoSubmitRound();
-        }
-    );
-    
-    roundTimerInstance.start(seconds);
+        );
+        
+        roundTimerInstance.start(seconds);
+    }, 50);
 }
 
 // Auto-submit when time runs out
@@ -999,9 +1002,13 @@ async function startMultiplayerGame(roomData) {
 
     // START PLAYER CENSUS MONITORING
     startPlayerCensus();
-    
-    // START PRESENCE UPDATES
-    startPresenceUpdates();
+
+    // START PRESENCE UPDATES - FASTER during gameplay (every 3 seconds)
+    stopPresenceUpdates(); // Stop any existing
+    presenceUpdateInterval = setInterval(() => {
+        updatePlayerPresence();
+    }, 3000); // 3 seconds during game
+    updatePlayerPresence(); // Immediate first update
     
     // Fetch fresh room data to get current timer setting
     const freshRoomDoc = await roomRef.get();
@@ -3577,37 +3584,40 @@ mobileExitBtn.addEventListener('click', async () => {
     }
 });
 
-// Mobile timer - UPDATED with ServerTimer
+// Mobile timer - FIXED to prevent duplicate listeners
 function startMobileTimer(seconds) {
     console.log('startMobileTimer called with seconds:', seconds);
     
-    // Stop any existing timer
+    // CRITICAL: Stop any existing timer AND its listener first
     if (mobileRoundTimerInstance) {
+        console.log('Stopping existing mobile timer');
         mobileRoundTimerInstance.stop();
+        mobileRoundTimerInstance = null;
     }
     
     const timerElement = document.querySelector('.mobile-timer');
     timerElement.classList.remove('warning');
     
-    mobileRoundTimerInstance = new ServerTimer(
-        roomRef,
-        (remaining) => {
-            mobileTimerValue.textContent = remaining;
-            
-            console.log('Mobile timer tick:', remaining); // DEBUG
-            
-            // Warning animation at 10 seconds
-            if (remaining <= 10) {
-                timerElement.classList.add('warning');
+    // Small delay to ensure old listener is fully cleaned up
+    setTimeout(() => {
+        mobileRoundTimerInstance = new ServerTimer(
+            roomRef,
+            (remaining) => {
+                mobileTimerValue.textContent = remaining;
+                
+                // Warning animation at 10 seconds
+                if (remaining <= 10) {
+                    timerElement.classList.add('warning');
+                }
+            },
+            () => {
+                console.log('Mobile timer complete');
+                autoSubmitMobileRound();
             }
-        },
-        () => {
-            console.log('Mobile timer complete'); // DEBUG
-            autoSubmitMobileRound();
-        }
-    );
-    
-    mobileRoundTimerInstance.start(seconds);
+        );
+        
+        mobileRoundTimerInstance.start(seconds);
+    }, 50);
 }
 
 // Stop mobile timer - UPDATED to use new timer instance
@@ -3762,9 +3772,13 @@ function startMobileGame(roomData) {
     
     // START PLAYER CENSUS MONITORING
     startPlayerCensus();
-    
-    // START PRESENCE UPDATES
-    startPresenceUpdates();
+
+    // START PRESENCE UPDATES - FASTER during gameplay (every 3 seconds)
+    stopPresenceUpdates(); // Stop any existing
+    presenceUpdateInterval = setInterval(() => {
+        updatePlayerPresence();
+    }, 3000); // 3 seconds during game
+    updatePlayerPresence(); // Immediate first update
     
     // Reset state
     currentRound = 1;
@@ -3961,7 +3975,7 @@ function startPlayerCensus() {
     });
 }
 
-// Host checks for stale players (minimal, efficient)
+// Host checks for stale players (faster for both lobby and game)
 function startHostStaleCheck() {
     if (!isRoomCreator || !playersRef) return;
     
@@ -3980,8 +3994,8 @@ function startHostStaleCheck() {
                 
                 const lastSeen = doc.data().lastSeen?.toMillis() || 0;
                 
-                // Remove if no update for 15 seconds
-                if (now - lastSeen > 15000) {
+                // Remove if no update for 10 seconds (faster than before)
+                if (now - lastSeen > 10000) {
                     console.log(`Removing stale player: ${doc.id}`);
                     await doc.ref.delete();
                 }
@@ -3989,7 +4003,7 @@ function startHostStaleCheck() {
         } catch (error) {
             console.log('Stale check error:', error);
         }
-    }, 5000); // Check every 5 seconds
+    }, 3000); // Check every 3 seconds
     
     window.hostStaleCheck = checkInterval;
 }
