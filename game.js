@@ -192,6 +192,11 @@ class ResultsTimer {
 
 // Centralized leave room function - UPDATED with timer cleanup
 async function leaveRoom() {
+    // Stop host stale monitor
+    if (window.hostStaleMonitor) {
+        clearInterval(window.hostStaleMonitor);
+        window.hostStaleMonitor = null;
+    }
     
     // Stop player census
     stopPlayerCensus();
@@ -450,6 +455,8 @@ createRoomBtn.addEventListener('click', async () => {
 
     // START PRESENCE UPDATES
     startPresenceUpdates();
+
+    startHostStaleMonitor();
 
     console.log('Room created:', roomCode);
 });
@@ -3922,6 +3929,39 @@ function stopPlayerCensus() {
     }
     lastKnownPlayerCount = 0;
     lastKnownPlayers = new Set();
+}
+
+// Host monitors for stale players (runs every 3 seconds, removes after 8 seconds of inactivity)
+function startHostStaleMonitor() {
+    if (!isRoomCreator || !playersRef || !currentRoomCode) return;
+    
+    const monitorInterval = setInterval(async () => {
+        if (!currentRoomCode || !isRoomCreator || !playersRef) {
+            clearInterval(monitorInterval);
+            return;
+        }
+        
+        try {
+            const now = Date.now();
+            const snapshot = await playersRef.get();
+            
+            for (const doc of snapshot.docs) {
+                if (doc.id === playerName) continue; // Skip self
+                
+                const lastSeen = doc.data().lastSeen?.toMillis() || 0;
+                
+                // Remove if stale (8 seconds without update)
+                if (now - lastSeen > 8000) {
+                    console.log(`Removing stale player: ${doc.id}`);
+                    await doc.ref.delete();
+                }
+            }
+        } catch (error) {
+            console.log('Stale monitor error:', error);
+        }
+    }, 3000); // Check every 3 seconds
+    
+    window.hostStaleMonitor = monitorInterval;
 }
 
 // Update player's last seen timestamp (lightweight presence)
