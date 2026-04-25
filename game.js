@@ -4509,9 +4509,18 @@ function startMobileGame(roomData) {
     
     // Load first question
     loadNewQuestion();
-    
-    // Start timer
-    startMobileTimer(roomData.timerSeconds);
+
+    // Check presenter mode before starting timer
+    if (isPresenterMode) {
+        // Hide timer completely in presenter mode
+        const mobileTimerElement = document.querySelector('.mobile-timer');
+        if (mobileTimerElement) {
+            mobileTimerElement.style.display = 'none';
+        }
+    } else {
+        // Normal mode - start timer
+        startMobileTimer(roomData.timerSeconds);
+    }
     
     // Listen for round changes (same as desktop)
     listenForRoundChanges();

@@ -1619,7 +1619,14 @@ button:hover {
     }
     
     .mobile-game-container {
-        display: flex !important;
+        width: 100%;
+        min-height: 100vh;
+        min-height: 100svh; /* Safe viewport height for mobile browsers */
+        background: #1a1a1a;
+        display: flex;
+        flex-direction: column;
+        padding: 10px; /* REDUCE from 15px */
+        gap: 10px; /* Reduce spacing */
     }
     
     .mobile-lobby.hidden,
@@ -1686,15 +1693,15 @@ button:hover {
 
 .mobile-btn {
     width: 100%;
-    padding: 15px;
-    font-size: 18px;
+    padding: 12px; /* REDUCE from 15px */
+    font-size: 16px; /* REDUCE from 18px */
     font-weight: bold;
     border: none;
     border-radius: 8px;
     background: #4CAF50;
     color: white;
     cursor: pointer;
-    margin-bottom: 10px;
+    margin-bottom: 0; /* CHANGE from 10px */
 }
 
 .mobile-btn:active {
@@ -1729,10 +1736,11 @@ button:hover {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 15px;
+    padding: 10px; /* REDUCE from 15px */
     background: #2a2a2a;
     border-radius: 10px;
-    margin-bottom: 15px;
+    margin-bottom: 10px; /* REDUCE from 15px */
+    flex-shrink: 0; /* Prevent shrinking */
 }
 
 .mobile-round {
@@ -1757,11 +1765,13 @@ button:hover {
     background: #000;
     border-radius: 10px;
     padding: 10px;
-    margin-bottom: 15px;
+    margin-bottom: 10px; /* REDUCE from 15px */
     flex: 1;
     display: flex;
     align-items: center;
     justify-content: center;
+    min-height: 0; /* Allow flexbox to shrink */
+    max-height: 50vh; /* Limit height */
 }
 
 #mobile-brain-slice {
@@ -1789,10 +1799,11 @@ button:hover {
 
 .mobile-slice-control {
     background: #2a2a2a;
-    padding: 15px;
+    padding: 10px; /* REDUCE from 15px */
     border-radius: 10px;
-    margin-bottom: 15px;
+    margin-bottom: 10px; /* REDUCE from 15px */
     text-align: center;
+    flex-shrink: 0;
 }
 
 .mobile-slider {
@@ -1810,6 +1821,8 @@ button:hover {
 .mobile-actions {
     display: flex;
     gap: 10px;
+    flex-shrink: 0; /* Prevent buttons from being cut off */
+    padding-bottom: env(safe-area-inset-bottom, 10px); /* Safe area for iPhone notch */
 }
 
 .mobile-actions .mobile-btn {
