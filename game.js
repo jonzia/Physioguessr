@@ -3767,6 +3767,42 @@ function startPlayerCensus() {
     
     console.log('Starting player census monitoring');
     
+    // ALSO monitor the room document itself for deletion/abandonment
+    const roomMonitor = roomRef.onSnapshot((roomDoc) => {
+        if (!roomDoc.exists) {
+            // Room was deleted
+            console.log('Room document deleted');
+            if (playerCensusListener) {
+                playerCensusListener();
+                playerCensusListener = null;
+            }
+            if (roomMonitor) roomMonitor();
+            
+            alert('Room has been closed. Returning to lobby.');
+            location.reload();
+            return;
+        }
+        
+        const roomData = roomDoc.data();
+        if (roomData.status === 'abandoned') {
+            // Room was marked as abandoned
+            console.log('Room marked as abandoned');
+            if (playerCensusListener) {
+                playerCensusListener();
+                playerCensusListener = null;
+            }
+            if (roomMonitor) roomMonitor();
+            
+            alert('Room has been closed. Returning to lobby.');
+            location.reload();
+            return;
+        }
+    }, (error) => {
+        console.log('Room monitor error:', error);
+        alert('Room has been closed. Returning to lobby.');
+        location.reload();
+    });
+    
     playerCensusListener = playersRef.onSnapshot(async (snapshot) => {
         const currentPlayerCount = snapshot.size;
         const currentPlayers = new Set(snapshot.docs.map(doc => doc.id));
@@ -3804,6 +3840,7 @@ function startPlayerCensus() {
                     playerCensusListener();
                     playerCensusListener = null;
                 }
+                if (roomMonitor) roomMonitor();
                 
                 // Get room state
                 const roomDoc = await roomRef.get();
@@ -3855,6 +3892,7 @@ function startPlayerCensus() {
                                 playerCensusListener();
                                 playerCensusListener = null;
                             }
+                            if (roomMonitor) roomMonitor();
                             
                             alert('All other players have disconnected. Returning to lobby.');
                             location.reload();
@@ -3881,6 +3919,7 @@ function startPlayerCensus() {
             playerCensusListener();
             playerCensusListener = null;
         }
+        if (roomMonitor) roomMonitor();
         
         // Show single alert and reload
         alert('Room has been closed. Returning to lobby.');
