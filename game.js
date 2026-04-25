@@ -900,37 +900,59 @@ function listenForRoundChanges() {
     
     // Initialize with current round
     lastSeenRound = currentRound;
-    let isStartingNewRound = false; // Flag to prevent race conditions
+    let isStartingNewRound = false;
     
     roundChangeListener = roomRef.onSnapshot(async (doc) => {
         const roomData = doc.data();
         
-        // If room's current round is ahead of what we've processed, force advance
+        // Check if game is over (applies to all modes)
+        if (roomData.status === 'finished') {
+            console.log('Game finished!');
+            
+            stopListeningForSubmissions();
+            hideResultsModal();
+            
+            if (roundChangeListener) {
+                roundChangeListener();
+                roundChangeListener = null;
+            }
+            
+            showGameOver();
+            return;
+        }
+        
+        // ✅ CHANGE - Only process round changes in presenter mode
+        // Normal mode uses auto-advance timer, not this listener
+        if (!isPresenterMode) {
+            return; // Exit early for normal mode
+        }
+        
+        // === PRESENTER MODE ONLY BELOW THIS LINE ===
+        
+        // If room's current round is ahead, force advance (presenter mode only)
         if (roomData.currentRound > lastSeenRound && roomData.currentRound > currentRound && !isStartingNewRound) {
             isStartingNewRound = true;
             console.log('Forced to advance to round', roomData.currentRound);
             lastSeenRound = roomData.currentRound;
             
-            // ADD - Check if presenter mode (skip for presenter, they control flow)
-            if (isPresenterMode && isRoomCreator) {
+            // Skip for presenter (they control flow)
+            if (isRoomCreator) {
                 console.log('Presenter mode - ignoring round change sync');
                 isStartingNewRound = false;
                 return;
             }
             
-            // CLEAR WAITING INTERVAL FROM PREVIOUS ROUND
+            // Clean up intervals/timers
             if (waitingInterval) {
                 clearInterval(waitingInterval);
                 waitingInterval = null;
             }
             
-            // Clean up results timer
             if (resultsTimerInstance) {
                 resultsTimerInstance.stop();
                 resultsTimerInstance = null;
             }
             
-            // Clean up any pending listeners/timeouts
             if (nextRoundListener) {
                 nextRoundListener();
                 nextRoundListener = null;
@@ -956,7 +978,6 @@ function listenForRoundChanges() {
                 updateMobileSlice();
                 mobileMarker.classList.remove('show');
                 
-                // CLEAR MOBILE WAITING INTERVAL FROM PREVIOUS ROUND
                 if (mobileWaitingInterval) {
                     clearInterval(mobileWaitingInterval);
                     mobileWaitingInterval = null;
@@ -964,61 +985,15 @@ function listenForRoundChanges() {
                 
                 loadNewQuestion();
                 
-                // STOP any existing timer first
                 if (mobileRoundTimerInstance) {
                     mobileRoundTimerInstance.stop();
                     mobileRoundTimerInstance = null;
                 }
                 
-                // RESET mobile timer display
-                const mobileTimerElement = document.querySelector('.mobile-timer');
-                if (mobileTimerElement) {
-                    mobileTimerElement.classList.remove('warning');
-                }
-                mobileTimerValue.textContent = '--';
+                // No timer in presenter mode for mobile guests
+                mobileTimerValue.textContent = 'Waiting...';
+                isStartingNewRound = false;
                 
-                // Check presenter mode (with safety check)
-                const isMobilePresenterMode = isPresenterMode === true; // Explicit check
-                
-                if (isMobilePresenterMode) {
-                    // Guest in presenter mode - no timer
-                    isStartingNewRound = false;
-                    mobileTimerValue.textContent = 'Waiting...';
-                } else {
-                    // Make sure timer is visible in normal mode
-                    if (mobileTimerElement) {
-                        mobileTimerElement.style.display = ''; // Clear inline style
-                    }
-                    
-                    // Normal mode - wait for timer
-                    if (roomData.roundStartTime) {
-                        isStartingNewRound = false;
-                        startMobileTimer(roomData.timerSeconds);
-                    } else {
-                        // Single polling attempt with timeout to prevent multiple timers
-                        let pollCount = 0;
-                        const maxPolls = 50; // 5 seconds max
-                        const waitForMobileTimer = setInterval(async () => {
-                            pollCount++;
-                            
-                            if (pollCount >= maxPolls) {
-                                clearInterval(waitForMobileTimer);
-                                console.error('Timeout waiting for mobile roundStartTime');
-                                isStartingNewRound = false;
-                                return;
-                            }
-                            
-                            const freshDoc = await roomRef.get();
-                            const freshData = freshDoc.data();
-                            
-                            if (freshData.roundStartTime) {
-                                clearInterval(waitForMobileTimer);
-                                isStartingNewRound = false;
-                                startMobileTimer(freshData.timerSeconds);
-                            }
-                        }, 100);
-                    }
-                }
             } else {
                 // Desktop
                 currentRoundDisplay.textContent = currentRound;
@@ -1026,91 +1001,28 @@ function listenForRoundChanges() {
                 submitBtn.style.opacity = '1';
                 submitBtn.style.cursor = 'pointer';
                 
-                // Fetch updated score from server in presenter mode
-                if (isPresenterMode && !isRoomCreator) {
-                    const myPlayerDoc = await playersRef.doc(playerName).get();
-                    if (myPlayerDoc.exists) {
-                        totalScore = myPlayerDoc.data().score || 0;
-                        scoreDisplay.textContent = totalScore;
-                        console.log('Synced score from server on round change:', totalScore);
-                    }
-                } else {
-                    // UPDATE SCORE DISPLAY (normal mode)
+                // Fetch updated score from server
+                const myPlayerDoc = await playersRef.doc(playerName).get();
+                if (myPlayerDoc.exists) {
+                    totalScore = myPlayerDoc.data().score || 0;
                     scoreDisplay.textContent = totalScore;
-                    console.log('listenForRoundChanges updated score to:', totalScore);
+                    console.log('Synced score from server on round change:', totalScore);
                 }
                 
-                // RESET timer display PROPERLY - clear the innerHTML completely
-                timerDisplay.classList.remove('hidden', 'warning');
-                timerDisplay.innerHTML = 'Time: <span id="timer-value">--</span>s';
+                // Keep timer hidden for guests
+                timerDisplay.classList.add('hidden');
                 
                 loadNewQuestion();
                 
-                // STOP any existing timer first
                 if (roundTimerInstance) {
                     roundTimerInstance.stop();
                     roundTimerInstance = null;
                 }
                 
-                // MODIFY - Check presenter mode
-                if (isPresenterMode) {
-                    // Guest in presenter mode - no timer, just wait
-                    isStartingNewRound = false;
-                    timerDisplay.innerHTML = 'Waiting for presenter...';
-                    
-                    // Re-start listening for presenter results
-                    listenForPresenterResults();
-                } else {
-                    // Normal mode - wait for timer
-                    if (roomData.roundStartTime) {
-                        isStartingNewRound = false;
-                        startRoundTimer(roomData.timerSeconds);
-                    } else {
-                        // Single polling attempt with timeout to prevent multiple timers
-                        let pollCount = 0;
-                        const maxPolls = 50; // 5 seconds max
-                        const waitForTimer = setInterval(async () => {
-                            pollCount++;
-                            
-                            if (pollCount >= maxPolls) {
-                                clearInterval(waitForTimer);
-                                console.error('Timeout waiting for desktop roundStartTime');
-                                isStartingNewRound = false;
-                                return;
-                            }
-                            
-                            const freshDoc = await roomRef.get();
-                            const freshData = freshDoc.data();
-                            
-                            if (freshData.roundStartTime) {
-                                clearInterval(waitForTimer);
-                                isStartingNewRound = false;
-                                startRoundTimer(freshData.timerSeconds);
-                            }
-                        }, 100);
-                    }
-                }
+                // Re-start listening for presenter results
+                isStartingNewRound = false;
+                listenForPresenterResults();
             }
-        }
-        
-        // Check if game is over
-        if (roomData.status === 'finished') {
-            console.log('Game finished!');
-            
-            // ADD - Stop listening for submissions
-            stopListeningForSubmissions();
-            
-            // Hide results modal if it's open
-            hideResultsModal();
-            
-            // Clean up listeners
-            if (roundChangeListener) {
-                roundChangeListener();
-                roundChangeListener = null;
-            }
-            
-            // Show game over screen
-            showGameOver();
         }
     });
 }
@@ -1314,8 +1226,8 @@ async function presenterContinue() {
         const roundData = data[`round${currentRound}`];
         
         if (roundData) {
-            // ✅ CHANGE - Get FRESH data from Firestore, not cached snapshot
-            const freshDoc = await playersRef.doc(doc.id).get();
+            // Force server read, not cache
+            const freshDoc = await playersRef.doc(doc.id).get({ source: 'server' });
             const freshData = freshDoc.data();
             const currentTotal = freshData.score || 0;
             
