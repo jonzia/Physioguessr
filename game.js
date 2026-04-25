@@ -977,12 +977,17 @@ function listenForRoundChanges() {
                 }
                 mobileTimerValue.textContent = '--';
                 
-                // MODIFY - Check presenter mode
+                // Check presenter mode
                 if (isPresenterMode) {
                     // Guest in presenter mode - no timer
                     isStartingNewRound = false;
                     mobileTimerValue.textContent = 'Waiting...';
                 } else {
+                    // Make sure timer is visible in normal mode
+                    if (mobileTimerElement) {
+                        mobileTimerElement.style.display = ''; // Clear inline style
+                    }
+                    
                     // Normal mode - wait for timer
                     if (roomData.roundStartTime) {
                         isStartingNewRound = false;
@@ -1317,6 +1322,8 @@ async function presenterContinue() {
             await playersRef.doc(doc.id).update({
                 score: newTotal
             });
+            
+            console.log(`✅ Updated ${data.name} (${doc.id}) total score: ${currentTotal} + ${roundData.score} = ${newTotal}`);
             
             console.log(`Updated ${data.name} total score: ${currentTotal} + ${roundData.score} = ${newTotal}`);
         } else {
@@ -2523,10 +2530,10 @@ function listenForPresenterResults() {
             // Update local totalScore from server in presenter mode
             if (isPresenterMode) {
                 totalScore = myData.score || 0;
+                console.log(`📊 Guest syncing score from server: ${totalScore} (round ${currentRound})`);
                 if (scoreDisplay) {
                     scoreDisplay.textContent = totalScore;
                 }
-                console.log('Updated totalScore from server:', totalScore);
             }
             
             // Check if mobile or desktop
@@ -2544,6 +2551,9 @@ function listenForPresenterResults() {
             } else {
                 // Show desktop results
                 showResultsModal(myRoundData.score, myRoundData.distance, allPlayersData);
+
+                // Hide timer display when results show
+                timerDisplay.classList.add('hidden');
                 
                 // Hide continue button for guests, show waiting message
                 continueBtn.classList.add('hidden');
