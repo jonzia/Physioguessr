@@ -977,8 +977,10 @@ function listenForRoundChanges() {
                 }
                 mobileTimerValue.textContent = '--';
                 
-                // Check presenter mode
-                if (isPresenterMode) {
+                // Check presenter mode (with safety check)
+                const isMobilePresenterMode = isPresenterMode === true; // Explicit check
+                
+                if (isMobilePresenterMode) {
                     // Guest in presenter mode - no timer
                     isStartingNewRound = false;
                     mobileTimerValue.textContent = 'Waiting...';
@@ -1298,11 +1300,11 @@ async function startMultiplayerGame(roomData) {
 async function presenterContinue() {
     console.log('Presenter clicked Continue');
     
-    // Get all player submissions for this round
+    // ✅ MOVE THIS UP - Get fresh player data first
     const playersSnapshot = await playersRef.get();
     const players = playersSnapshot.docs;
     
-    // Calculate and update total scores for all guests
+    // ✅ ADD - Calculate and update total scores for all guests
     for (const doc of players) {
         const data = doc.data();
         
@@ -1312,8 +1314,10 @@ async function presenterContinue() {
         const roundData = data[`round${currentRound}`];
         
         if (roundData) {
-            // Get current total score
-            const currentTotal = data.score || 0;
+            // ✅ CHANGE - Get FRESH data from Firestore, not cached snapshot
+            const freshDoc = await playersRef.doc(doc.id).get();
+            const freshData = freshDoc.data();
+            const currentTotal = freshData.score || 0;
             
             // Add this round's score
             const newTotal = currentTotal + roundData.score;
@@ -1323,11 +1327,8 @@ async function presenterContinue() {
                 score: newTotal
             });
             
-            console.log(`✅ Updated ${data.name} (${doc.id}) total score: ${currentTotal} + ${roundData.score} = ${newTotal}`);
-            
-            console.log(`Updated ${data.name} total score: ${currentTotal} + ${roundData.score} = ${newTotal}`);
+            console.log(`✅ Updated ${freshData.name} (${doc.id}) total score: ${currentTotal} + ${roundData.score} = ${newTotal}`);
         } else {
-            // Player didn't submit this round - no change to score
             console.log(`${data.name} didn't submit for round ${currentRound}`);
         }
     }
@@ -2216,7 +2217,7 @@ function hideResultsModal() {
     resultsOverlay.classList.add('hidden');
     resultsModal.classList.add('hidden');
     
-    // ADD - Restore score/distance boxes (in case they were hidden for presenter)
+    // Restore score/distance boxes (in case they were hidden for presenter)
     const resultScore = document.querySelector('.result-score');
     const resultDistance = document.querySelector('.result-distance');
     if (resultScore) resultScore.style.display = 'block';
@@ -2226,6 +2227,11 @@ function hideResultsModal() {
     if (resultsTimerInstance) {
         resultsTimerInstance.stop();
         resultsTimerInstance = null;
+    }
+    
+    // Keep timer hidden for guests in presenter mode
+    if (isPresenterMode && !isRoomCreator) {
+        timerDisplay.classList.add('hidden');
     }
     
     // Reset continue button state
