@@ -898,27 +898,40 @@ function listenForRoundChanges() {
                     mobileRoundTimerInstance = null;
                 }
                 
-                // Wait for roundStartTime - only check once
+                // RESET mobile timer display
+                const mobileTimerElement = document.querySelector('.mobile-timer');
+                if (mobileTimerElement) {
+                    mobileTimerElement.classList.remove('warning');
+                }
+                mobileTimerValue.textContent = '--';
+                
+                // Wait for roundStartTime - SINGLE CHECK with timeout
                 if (roomData.roundStartTime) {
-                    startMobileTimer(roomData.timerSeconds);
                     isStartingNewRound = false;
+                    startMobileTimer(roomData.timerSeconds);
                 } else {
-                    // Poll for it
+                    // Single polling attempt with timeout to prevent multiple timers
+                    let pollCount = 0;
+                    const maxPolls = 50; // 5 seconds max
                     const waitForMobileTimer = setInterval(async () => {
+                        pollCount++;
+                        
+                        if (pollCount >= maxPolls) {
+                            clearInterval(waitForMobileTimer);
+                            console.error('Timeout waiting for mobile roundStartTime');
+                            isStartingNewRound = false;
+                            return;
+                        }
+                        
                         const freshDoc = await roomRef.get();
                         const freshData = freshDoc.data();
                         
                         if (freshData.roundStartTime) {
                             clearInterval(waitForMobileTimer);
-                            startMobileTimer(freshData.timerSeconds);
                             isStartingNewRound = false;
+                            startMobileTimer(freshData.timerSeconds);
                         }
                     }, 100);
-                    
-                    setTimeout(() => {
-                        clearInterval(waitForMobileTimer);
-                        isStartingNewRound = false;
-                    }, 5000);
                 }
             } else {
                 // Desktop
@@ -931,9 +944,9 @@ function listenForRoundChanges() {
                 scoreDisplay.textContent = totalScore;
                 console.log('listenForRoundChanges updated score to:', totalScore);
                 
-                // RESET timer display
+                // RESET timer display PROPERLY - clear the innerHTML completely
                 timerDisplay.classList.remove('hidden', 'warning');
-                timerDisplay.innerHTML = `Time: <span id="timer-value">--</span>s`;
+                timerDisplay.innerHTML = 'Time: <span id="timer-value">--</span>s';
                 
                 loadNewQuestion();
                 
@@ -943,27 +956,33 @@ function listenForRoundChanges() {
                     roundTimerInstance = null;
                 }
                 
-                // Wait for roundStartTime - only check once
+                // Wait for roundStartTime - SINGLE CHECK with timeout
                 if (roomData.roundStartTime) {
-                    startRoundTimer(roomData.timerSeconds);
                     isStartingNewRound = false;
+                    startRoundTimer(roomData.timerSeconds);
                 } else {
-                    // Poll for it
+                    // Single polling attempt with timeout to prevent multiple timers
+                    let pollCount = 0;
+                    const maxPolls = 50; // 5 seconds max
                     const waitForTimer = setInterval(async () => {
+                        pollCount++;
+                        
+                        if (pollCount >= maxPolls) {
+                            clearInterval(waitForTimer);
+                            console.error('Timeout waiting for desktop roundStartTime');
+                            isStartingNewRound = false;
+                            return;
+                        }
+                        
                         const freshDoc = await roomRef.get();
                         const freshData = freshDoc.data();
                         
                         if (freshData.roundStartTime) {
                             clearInterval(waitForTimer);
-                            startRoundTimer(freshData.timerSeconds);
                             isStartingNewRound = false;
+                            startRoundTimer(freshData.timerSeconds);
                         }
                     }, 100);
-                    
-                    setTimeout(() => {
-                        clearInterval(waitForTimer);
-                        isStartingNewRound = false;
-                    }, 5000);
                 }
             }
         }
