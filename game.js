@@ -62,6 +62,7 @@ let mobileRoundTimerInstance = null;
 let resultsTimerInstance = null;
 let waitingInterval = null;
 let mobileWaitingInterval = null;
+let gameStartListener = null;
 
 // ============================================
 // SERVER-SYNCHRONIZED TIMER SYSTEM
@@ -216,6 +217,11 @@ class ResultsTimer {
 
 // Centralized leave room function - UPDATED with timer cleanup
 async function leaveRoom() {
+    // Unsubscribe from game start listener
+    if (gameStartListener) {
+        gameStartListener();
+        gameStartListener = null;
+    }
     // Stop guest host monitor
     if (window.guestHostMonitor) {
         clearInterval(window.guestHostMonitor);
@@ -723,9 +729,15 @@ startGameBtn.addEventListener('click', async () => {
 });
 
 function listenForGameStart() {
+    // Prevent duplicate listeners
+    if (gameStartListener) {
+        console.log('[listenForGameStart] Listener already exists, skipping');
+        return;
+    }
+    
     console.log('[listenForGameStart] Setting up listener, hasGameStarted:', hasGameStarted);
     
-    roomRef.onSnapshot((doc) => {
+    gameStartListener = roomRef.onSnapshot((doc) => {
         // Check if room still exists
         if (!doc.exists) {
             console.log('Room no longer exists');
@@ -1821,6 +1833,10 @@ async function showGameOver() {
     if (playerCountListener) {
         playerCountListener();
         playerCountListener = null;
+    }
+    if (gameStartListener) {
+        gameStartListener();
+        gameStartListener = null;
     }
     
     // Stop timers
