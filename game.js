@@ -1094,10 +1094,16 @@ async function startMultiplayerGame(roomData) {
         window.hostPresenceChecker = null;
     }
     
-    // HIDE ALL PANELS - INCLUDING MOBILE
+    // HIDE ALL PANELS - INCLUDING MOBILE - FORCE WITH STYLE
     const mobileWaitingPanel = document.getElementById('mobile-waiting-panel');
     if (mobileWaitingPanel) {
         mobileWaitingPanel.classList.add('hidden');
+        mobileWaitingPanel.style.display = 'none';  // ADD THIS
+    }
+    
+    const mobileLobby = document.getElementById('mobile-lobby');
+    if (mobileLobby) {
+        mobileLobby.style.display = 'none';  // ADD THIS
     }
     
     createRoomPanel.classList.add('hidden');
@@ -1109,7 +1115,7 @@ async function startMultiplayerGame(roomData) {
         return;
     }
     
-    // Show game container
+    // Desktop: Show game container
     gameContainer.classList.remove('hidden');
     gameContainer.style.display = 'flex';
 
