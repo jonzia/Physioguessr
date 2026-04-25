@@ -753,11 +753,11 @@ leaveWaitingBtn.addEventListener('click', async () => {
     }
 });
 
-// Start round timer - FIXED to prevent duplicate listeners
+// Start round timer - WITH DEBUGGING
 function startRoundTimer(seconds) {
     console.log('startRoundTimer called with seconds:', seconds);
     
-    // CRITICAL: Stop any existing timer AND its listener first
+    // CRITICAL: Stop any existing timer first
     if (roundTimerInstance) {
         console.log('Stopping existing round timer');
         roundTimerInstance.stop();
@@ -767,29 +767,31 @@ function startRoundTimer(seconds) {
     timerDisplay.classList.remove('hidden', 'warning');
     timerDisplay.innerHTML = `Time: <span id="timer-value">${seconds}</span>s`;
     
-    // Small delay to ensure old listener is fully cleaned up
-    setTimeout(() => {
-        roundTimerInstance = new ServerTimer(
-            roomRef,
-            (remaining) => {
-                const timerValueSpan = document.getElementById('timer-value');
-                if (timerValueSpan) {
-                    timerValueSpan.textContent = remaining;
-                }
-                
-                // Warning animation at 10 seconds
-                if (remaining <= 10) {
-                    timerDisplay.classList.add('warning');
-                }
-            },
-            () => {
-                console.log('Desktop timer complete');
-                autoSubmitRound();
+    console.log('Creating new ServerTimer instance');
+    roundTimerInstance = new ServerTimer(
+        roomRef,
+        (remaining) => {
+            const timerValueSpan = document.getElementById('timer-value');
+            if (timerValueSpan) {
+                timerValueSpan.textContent = remaining;
             }
-        );
-        
-        roundTimerInstance.start(seconds);
-    }, 50);
+            
+            console.log('Desktop timer tick:', remaining); // This should appear
+            
+            // Warning animation at 10 seconds
+            if (remaining <= 10) {
+                timerDisplay.classList.add('warning');
+            }
+        },
+        () => {
+            console.log('Desktop timer complete');
+            autoSubmitRound();
+        }
+    );
+    
+    console.log('Calling timer.start()');
+    roundTimerInstance.start(seconds);
+    console.log('Timer.start() completed');
 }
 
 // Auto-submit when time runs out
@@ -938,18 +940,32 @@ function listenForRoundChanges() {
                 }
                 
                 // WAIT for roundStartTime to be set before starting timer
+                let attempts = 0;
                 const waitForTimer = setInterval(async () => {
+                    attempts++;
+                    console.log(`Waiting for roundStartTime, attempt ${attempts}`);
+                    
                     const freshDoc = await roomRef.get();
                     const freshData = freshDoc.data();
                     
+                    console.log('Round start time check:', {
+                        hasRoundStartTime: !!freshData.roundStartTime,
+                        currentRound: freshData.currentRound,
+                        timerSeconds: freshData.timerSeconds
+                    });
+                    
                     if (freshData.roundStartTime) {
                         clearInterval(waitForTimer);
+                        console.log('Found roundStartTime, starting timer');
                         startRoundTimer(freshData.timerSeconds);
                     }
                 }, 100);
-                
+
                 // Timeout after 5 seconds
-                setTimeout(() => clearInterval(waitForTimer), 5000);
+                setTimeout(() => {
+                    clearInterval(waitForTimer);
+                    console.log('Timer wait timeout after 5 seconds');
+                }, 5000);
             }
         }
         
