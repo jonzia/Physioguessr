@@ -1235,6 +1235,14 @@ async function startMultiplayerGame(roomData) {
     totalScore = 0;
     scoreDisplay.textContent = totalScore;
     currentRoundDisplay.textContent = currentRound;
+
+    // Hide score for presenter
+    if (isPresenter) {
+        const scoreDiv = document.querySelector('.score');
+        if (scoreDiv) {
+            scoreDiv.style.display = 'none';
+        }
+    }
     
     console.log('Game starting with questions:', freshRoomData.questionOrder);
     console.log('Timer set to:', freshRoomData.timerSeconds);
@@ -4379,7 +4387,13 @@ function showMobileResults(score, distance, allPlayersData) {
 function updateMobileLeaderboard(allPlayersData) {
     if (!allPlayersData) return;
     
-    const sortedPlayers = allPlayersData.sort((a, b) => b.score - a.score);
+    // Filter out presenter (host) in presenter mode
+    let playersToShow = allPlayersData;
+    if (isPresenterMode) {
+        playersToShow = allPlayersData.filter(player => !player.isCreator);
+    }
+    
+    const sortedPlayers = playersToShow.sort((a, b) => b.score - a.score);
     
     mobileLeaderboardList.innerHTML = '';
     
