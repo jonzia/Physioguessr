@@ -1439,6 +1439,14 @@ button:hover {
    MOBILE STYLES
    ============================================ */
 
+.mobile-leaderboard-rank.second {
+    color: #C0C0C0;  /* Silver */
+}
+
+.mobile-leaderboard-rank.third {
+    color: #CD7F32;  /* Bronze */
+}
+
 .mobile-waiting-panel {
     position: fixed;
     top: 0;

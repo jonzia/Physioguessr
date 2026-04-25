@@ -43,15 +43,12 @@ let isRoomCreator = false;
 let playerName = ''
 let roomRef = null;
 let playersRef = null;
-let roundTimer = null;
 let timeRemaining = 30;
 let hasSubmittedThisRound = false;
 let resultsTimeout = null;
 let submissionListener = null;
 let nextRoundListener = null;
 let roundChangeListener = null;
-let waitingCountdown = null;
-let autoAdvanceCountdown = null;
 let lastSeenRound = 0; // Track last round we processed
 let hasGameStarted = false;
 let lastPlayerCount = 0;
@@ -60,8 +57,139 @@ let selectedQuestionSet = 'default';
 let playerCountListener = null;
 let monitoringActive = false;
 
-// Centralized leave room function - UPDATED with all cleanup including mobile
+let roundTimerInstance = null;
+let mobileRoundTimerInstance = null;
+let resultsTimerInstance = null;
+
+// ============================================
+// SERVER-SYNCHRONIZED TIMER SYSTEM
+// ============================================
+
+// Universal timer that syncs with server timestamp
+class ServerTimer {
+    constructor(roomRef, onTick, onComplete) {
+        this.roomRef = roomRef;
+        this.onTick = onTick;
+        this.onComplete = onComplete;
+        this.interval = null;
+        this.unsubscribe = null;
+        this.startTime = null;
+        this.duration = null;
+    }
+    
+    start(duration) {
+        this.stop(); // Clear any existing timer
+        
+        // Listen to room for server timestamp
+        this.unsubscribe = this.roomRef.onSnapshot((doc) => {
+            if (!doc.exists) {
+                this.stop();
+                return;
+            }
+            
+            const data = doc.data();
+            const serverStartTime = data.roundStartTime?.toMillis();
+            
+            if (!serverStartTime) return;
+            
+            // Only start interval once we have server time
+            if (!this.interval && serverStartTime) {
+                this.startTime = serverStartTime;
+                this.duration = data.timerSeconds || duration;
+                
+                const updateTimer = () => {
+                    const now = Date.now();
+                    const elapsed = (now - this.startTime) / 1000;
+                    const remaining = Math.max(0, Math.ceil(this.duration - elapsed));
+                    
+                    this.onTick(remaining);
+                    
+                    if (remaining <= 0) {
+                        this.stop();
+                        this.onComplete();
+                    }
+                };
+                
+                updateTimer(); // Immediate update
+                this.interval = setInterval(updateTimer, 100); // Update every 100ms for smoothness
+            }
+        });
+    }
+    
+    stop() {
+        if (this.interval) {
+            clearInterval(this.interval);
+            this.interval = null;
+        }
+        if (this.unsubscribe) {
+            this.unsubscribe();
+            this.unsubscribe = null;
+        }
+    }
+}
+
+// Results screen auto-advance timer (15 seconds fixed)
+class ResultsTimer {
+    constructor(onTick, onComplete) {
+        this.onTick = onTick;
+        this.onComplete = onComplete;
+        this.interval = null;
+        this.startTime = null;
+        this.duration = 15; // Always 15 seconds
+    }
+    
+    start() {
+        this.stop();
+        this.startTime = Date.now();
+        
+        const updateTimer = () => {
+            const elapsed = (Date.now() - this.startTime) / 1000;
+            const remaining = Math.max(0, Math.ceil(this.duration - elapsed));
+            
+            this.onTick(remaining);
+            
+            if (remaining <= 0) {
+                this.stop();
+                this.onComplete();
+            }
+        };
+        
+        updateTimer();
+        this.interval = setInterval(updateTimer, 1000);
+    }
+    
+    stop() {
+        if (this.interval) {
+            clearInterval(this.interval);
+            this.interval = null;
+        }
+    }
+}
+
+// Centralized leave room function - UPDATED with timer cleanup
 async function leaveRoom() {
+    // Stop player census
+    stopPlayerCensus();
+    
+    // Stop presence updates
+    stopPresenceUpdates();
+    
+    // Stop all timers
+    if (roundTimerInstance) {
+        roundTimerInstance.stop();
+        roundTimerInstance = null;
+    }
+    
+    if (mobileRoundTimerInstance) {
+        mobileRoundTimerInstance.stop();
+        mobileRoundTimerInstance = null;
+    }
+    
+    if (resultsTimerInstance) {
+        resultsTimerInstance.stop();
+        resultsTimerInstance = null;
+    }
+    
     // Stop host presence updates
     if (window.hostPresenceInterval) {
         clearInterval(window.hostPresenceInterval);
@@ -72,30 +200,6 @@ async function leaveRoom() {
     if (window.hostPresenceChecker) {
         clearInterval(window.hostPresenceChecker);
         window.hostPresenceChecker = null;
-    }
-    
-    // Stop desktop timer
-    if (roundTimer) {
-        clearInterval(roundTimer);
-        roundTimer = null;
-    }
-    
-    // Stop mobile timer
-    if (mobileTimer) {
-        clearInterval(mobileTimer);
-        mobileTimer = null;
-    }
-    
-    // Unsubscribe from desktop timer listener
-    if (window.timerUnsubscribe) {
-        window.timerUnsubscribe();
-        window.timerUnsubscribe = null;
-    }
-    
-    // Unsubscribe from mobile timer listener
-    if (window.mobileTimerUnsubscribe) {
-        window.mobileTimerUnsubscribe();
-        window.mobileTimerUnsubscribe = null;
     }
     
     // Unsubscribe from room monitoring
@@ -152,99 +256,6 @@ function hideLobbyLoading() {
 // Helper function to check if player is in a waiting room
 function isInWaitingRoom() {
     return currentRoomCode !== null && !document.getElementById('waiting-panel').classList.contains('hidden');
-}
-
-// Track player presence in Firebase
-function setupPresenceTracking() {
-    if (!currentRoomCode || !playerName) return;
-    
-    // Create a reference to this player's connection status
-    const playerPresenceRef = playersRef.doc(playerName);
-    
-    // When the client disconnects, remove them from the room
-    playerPresenceRef.onSnapshot(() => {}, () => {
-        // Error callback - connection lost
-        console.log('Connection lost');
-    });
-    
-    // Update last seen timestamp every 5 seconds
-    const presenceInterval = setInterval(async () => {
-        if (playerPresenceRef && currentRoomCode) {
-            try {
-                await playerPresenceRef.update({
-                    lastSeen: firebase.firestore.FieldValue.serverTimestamp()
-                });
-            } catch (error) {
-                console.log('Presence update failed:', error);
-                clearInterval(presenceInterval);
-            }
-        } else {
-            clearInterval(presenceInterval);
-        }
-    }, 5000);
-    
-    // Clean up on page unload
-    window.addEventListener('beforeunload', async () => {
-        clearInterval(presenceInterval);
-        await handlePlayerDisconnect();
-    });
-}
-
-// Handle player disconnect
-async function handlePlayerDisconnect() {
-    if (!currentRoomCode || !playerName || !playersRef) return;
-    
-    try {
-        // If creator left during waiting phase, mark room as abandoned AND delete it
-        if (isRoomCreator && roomRef) {
-            const roomDoc = await roomRef.get();
-            if (roomDoc.exists && roomDoc.data().status === 'waiting') {
-                console.log('Host left waiting room, closing room');
-                
-                // Delete all players first
-                const playersSnapshot = await playersRef.get();
-                const deletePromises = playersSnapshot.docs.map(doc => doc.ref.delete());
-                await Promise.all(deletePromises);
-                
-                // Delete the room
-                await roomRef.delete();
-                console.log('Room deleted');
-                return; // Don't continue to remove player individually
-            }
-        }
-        
-        // Remove player from room (non-host or mid-game)
-        await playersRef.doc(playerName).delete();
-        console.log('Player removed from room');
-        
-    } catch (error) {
-        console.log('Disconnect cleanup error:', error);
-    }
-}
-
-// Check for inactive players (call this periodically during game)
-async function checkForDisconnectedPlayers() {
-    if (!playersRef || !currentRoomCode) return;
-    
-    const now = Date.now();
-    const timeout = 15000; // 15 seconds without update = disconnected
-    
-    const snapshot = await playersRef.get();
-    
-    snapshot.forEach(async (doc) => {
-        const playerData = doc.data();
-        const lastSeen = playerData.lastSeen?.toMillis() || 0;
-        
-        if (now - lastSeen > timeout) {
-            console.log(`Player ${doc.id} disconnected (inactive)`);
-            
-            // Show notification
-            showNotification(`${doc.id} disconnected`);
-            
-            // Remove from Firebase
-            await playersRef.doc(doc.id).delete();
-        }
-    });
 }
 
 // Show toast notification
@@ -356,120 +367,6 @@ startSinglePlayerBtn.addEventListener('click', () => {
     console.log('Single player mode started with set:', selectedQuestionSet);
 });
 
-// Start host heartbeat - ONLY for waiting room
-function startHostHeartbeat() {
-    if (!isRoomCreator || !currentRoomCode || !roomRef) return;
-    
-    // Clear any existing heartbeat
-    if (window.hostPresenceInterval) {
-        clearInterval(window.hostPresenceInterval);
-    }
-    
-    console.log('Starting host heartbeat'); // DEBUG
-    
-    window.hostPresenceInterval = setInterval(async () => {
-        if (!currentRoomCode || !isRoomCreator || !roomRef) {
-            clearInterval(window.hostPresenceInterval);
-            window.hostPresenceInterval = null;
-            return;
-        }
-        
-        try {
-            const roomDoc = await roomRef.get();
-            if (!roomDoc.exists || roomDoc.data().status !== 'waiting') {
-                // Room deleted or game started - stop heartbeat
-                console.log('Stopping host heartbeat - room gone or game started'); // DEBUG
-                clearInterval(window.hostPresenceInterval);
-                window.hostPresenceInterval = null;
-                return;
-            }
-            
-            await roomRef.update({
-                hostLastSeen: firebase.firestore.FieldValue.serverTimestamp()
-            });
-            console.log('Host heartbeat sent'); // DEBUG
-        } catch (error) {
-            console.log('Host heartbeat failed:', error);
-            clearInterval(window.hostPresenceInterval);
-            window.hostPresenceInterval = null;
-        }
-    }, 2000);
-}
-
-// Start guest monitoring - ONLY for waiting room
-function startGuestMonitoring() {
-    if (isRoomCreator || !currentRoomCode || !roomRef) return;
-    
-    // Clear any existing checker
-    if (window.hostPresenceChecker) {
-        clearInterval(window.hostPresenceChecker);
-    }
-    
-    console.log('Starting guest monitoring'); // DEBUG
-    
-    window.hostPresenceChecker = setInterval(async () => {
-        try {
-            const roomDoc = await roomRef.get();
-            
-            if (!roomDoc.exists) {
-                clearInterval(window.hostPresenceChecker);
-                window.hostPresenceChecker = null;
-                alert('Room has been closed');
-                leaveRoom();
-                return;
-            }
-            
-            const data = roomDoc.data();
-            
-            // If game started, stop monitoring
-            if (data.status !== 'waiting') {
-                console.log('Stopping guest monitoring - game started'); // DEBUG
-                clearInterval(window.hostPresenceChecker);
-                window.hostPresenceChecker = null;
-                return;
-            }
-            
-            const hostLastSeen = data.hostLastSeen?.toMillis();
-            const now = Date.now();
-            const diff = (now - hostLastSeen) / 1000;
-            
-            console.log('Guest check - host last seen:', diff, 'seconds ago'); // DEBUG
-            
-            if (hostLastSeen && (now - hostLastSeen) > 10000) {
-                console.log('Host might be gone, double checking...'); // DEBUG
-                
-                // Double check
-                await new Promise(resolve => setTimeout(resolve, 2000));
-                
-                const doubleCheck = await roomRef.get();
-                if (!doubleCheck.exists) return;
-                
-                const doubleCheckLastSeen = doubleCheck.data().hostLastSeen?.toMillis();
-                const doubleCheckDiff = (Date.now() - doubleCheckLastSeen) / 1000;
-                
-                console.log('Double check - host last seen:', doubleCheckDiff, 'seconds ago'); // DEBUG
-                
-                if (doubleCheckLastSeen && (Date.now() - doubleCheckLastSeen) > 10000) {
-                    console.log('Host confirmed gone'); // DEBUG
-                    clearInterval(window.hostPresenceChecker);
-                    window.hostPresenceChecker = null;
-                    
-                    alert('Host has disconnected. Room is closing.');
-                    
-                    // Cleanup
-                    const playersSnapshot = await playersRef.get();
-                    await Promise.all(playersSnapshot.docs.map(doc => doc.ref.delete()));
-                    await roomRef.delete();
-                    
-                    leaveRoom();
-                }
-            }
-        } catch (error) {
-            console.error('Guest monitoring error:', error);
-        }
-    }, 3000); // Check every 3 seconds
-}
-
 // Create Room - SIMPLIFIED
 createRoomBtn.addEventListener('click', async () => {
     if (isInWaitingRoom()) {
@@ -522,10 +419,13 @@ createRoomBtn.addEventListener('click', async () => {
     
     // Listen for players joining
     listenForPlayers();
-    
-    // Start host heartbeat
-    startHostHeartbeat();
-    
+
+    // START PLAYER CENSUS in waiting room
+    startPlayerCensus();
+
+    // START PRESENCE UPDATES
+    startPresenceUpdates();
+
     console.log('Room created:', roomCode);
 });
 
@@ -664,9 +564,12 @@ joinRoomSubmitBtn.addEventListener('click', async () => {
 
         // Listen for game start
         listenForGameStart();
-        
-        // Start guest monitoring
-        startGuestMonitoring();
+
+        // START PLAYER CENSUS in waiting room
+        startPlayerCensus();
+
+        // START PRESENCE UPDATES
+        startPresenceUpdates();
 
         hideLobbyLoading();
 
@@ -793,73 +696,37 @@ leaveWaitingBtn.addEventListener('click', async () => {
     }
 });
 
-// Start round timer - SIMPLIFIED with single fetch
+// Start round timer - SIMPLIFIED with ServerTimer
 function startRoundTimer(seconds) {
     console.log('startRoundTimer called with seconds:', seconds);
     
-    // Clear any existing timer
-    if (roundTimer) clearInterval(roundTimer);
+    // Stop any existing timer
+    if (roundTimerInstance) {
+        roundTimerInstance.stop();
+    }
     
     timerDisplay.classList.remove('hidden', 'warning');
     timerDisplay.innerHTML = `Time: <span id="timer-value">${seconds}</span>s`;
-    const timerValueSpan = document.getElementById('timer-value');
     
-    // Fetch room data ONCE to get the round start time
-    roomRef.get().then((doc) => {
-        if (!doc.exists) {
-            console.error('Room does not exist');
-            return;
-        }
-        
-        const data = doc.data();
-        console.log('Timer room data:', {
-            hasRoundStartTime: !!data.roundStartTime,
-            roundStartTime: data.roundStartTime,
-            timerSeconds: data.timerSeconds
-        });
-        
-        const roundStartTime = data.roundStartTime?.toMillis();
-        const roundDuration = data.timerSeconds || seconds;
-        
-        if (!roundStartTime) {
-            console.error('No roundStartTime in room data', data);
-            return;
-        }
-        
-        console.log('Timer started:', {
-            roundStartTime: new Date(roundStartTime),
-            duration: roundDuration,
-            localTime: new Date()
-        });
-        
-        // Calculate time remaining based on server timestamp
-        const updateTimer = () => {
-            const now = Date.now();
-            const elapsed = (now - roundStartTime) / 1000; // seconds elapsed since server set the timestamp
-            timeRemaining = Math.max(0, Math.ceil(roundDuration - elapsed));
-            
-            timerValueSpan.textContent = timeRemaining;
-            
-            console.log('Timer tick:', timeRemaining, 'elapsed:', elapsed.toFixed(1)); // Debug
+    roundTimerInstance = new ServerTimer(
+        roomRef,
+        (remaining) => {
+            const timerValueSpan = document.getElementById('timer-value');
+            if (timerValueSpan) {
+                timerValueSpan.textContent = remaining;
+            }
             
             // Warning animation at 10 seconds
-            if (timeRemaining <= 10) {
+            if (remaining <= 10) {
                 timerDisplay.classList.add('warning');
             }
-            
-            // Time's up
-            if (timeRemaining <= 0) {
-                clearInterval(roundTimer);
-                autoSubmitRound();
-            }
-        };
-        
-        // Update immediately
-        updateTimer();
-        
-        // Then update every 1000ms (1 second)
-        roundTimer = setInterval(updateTimer, 1000);
-    });
+        },
+        () => {
+            autoSubmitRound();
+        }
+    );
+    
+    roundTimerInstance.start(seconds);
 }
 
 // Auto-submit when time runs out
@@ -898,17 +765,11 @@ function autoSubmitRound() {
     submitBtn.click();
 }
 
-// Stop timer - UPDATED to clean up listener
+// Stop timer
 function stopRoundTimer() {
-    if (roundTimer) {
-        clearInterval(roundTimer);
-        roundTimer = null;
-    }
-    
-    // Unsubscribe from room timer listener
-    if (window.timerUnsubscribe) {
-        window.timerUnsubscribe();
-        window.timerUnsubscribe = null;
+    if (roundTimerInstance) {
+        roundTimerInstance.stop();
+        roundTimerInstance = null;
     }
     
     timerDisplay.classList.add('hidden');
@@ -1025,75 +886,7 @@ function listenForRoundChanges() {
     });
 }
 
-// Monitor player count during multiplayer games
-function monitorPlayerCount() {
-    if (!currentRoomCode || !playersRef) return;
-    if (monitoringActive) {
-        console.log('Already monitoring player count');
-        return;
-    }
-    
-    monitoringActive = true;
-    
-    // Clean up old listener if exists
-    if (playerCountListener) {
-        playerCountListener();
-        playerCountListener = null;
-    }
-    
-    playerCountListener = playersRef.onSnapshot((snapshot) => {
-        const playerCount = snapshot.size;
-        
-        console.log('Player count snapshot:', playerCount, 'Last:', lastPlayerCount);
-        
-        // Initialize on first call
-        if (lastPlayerCount === 0) {
-            lastPlayerCount = playerCount;
-            console.log('Initialized monitoring with', playerCount, 'players');
-            return;
-        }
-        
-        // Ignore if count increased (shouldn't happen mid-game but just in case)
-        if (playerCount > lastPlayerCount) {
-            console.log('Player count increased, updating lastPlayerCount');
-            lastPlayerCount = playerCount;
-            return;
-        }
-        
-        // Check if someone left
-        if (playerCount < lastPlayerCount) {
-            const playersLost = lastPlayerCount - playerCount;
-            console.log(`${playersLost} player(s) disconnected`);
-            showNotification(`${playersLost} player(s) disconnected (${playerCount} remaining)`);
-            lastPlayerCount = playerCount;
-        }
-        
-        // Only end game if down to 1 player
-        if (playerCount === 1) {
-            console.log('Only 1 player remaining, ending game');
-            
-            // Clean up listener before reloading
-            if (playerCountListener) {
-                playerCountListener();
-                playerCountListener = null;
-            }
-            monitoringActive = false;
-            
-            alert('Other player disconnected. Returning to lobby.');
-            location.reload();
-        } else if (playerCount === 0) {
-            console.log('No players remaining');
-            if (playerCountListener) {
-                playerCountListener();
-                playerCountListener = null;
-            }
-            monitoringActive = false;
-            location.reload();
-        }
-    });
-}
-
-// Start multiplayer game for all players - UPDATED to stop host presence
+// Start multiplayer game for all players - UPDATED with player census
 async function startMultiplayerGame(roomData) {
     // Prevent double-starting
     if (hasGameStarted) {
@@ -1104,7 +897,7 @@ async function startMultiplayerGame(roomData) {
     
     console.log('startMultiplayerGame called');
     
-    // STOP ALL WAITING ROOM MONITORING
+    // STOP HEARTBEAT MONITORING (no longer needed)
     if (window.hostPresenceInterval) {
         clearInterval(window.hostPresenceInterval);
         window.hostPresenceInterval = null;
@@ -1115,16 +908,16 @@ async function startMultiplayerGame(roomData) {
         window.hostPresenceChecker = null;
     }
     
-    // HIDE ALL PANELS - INCLUDING MOBILE - FORCE WITH STYLE
+    // HIDE ALL PANELS
     const mobileWaitingPanel = document.getElementById('mobile-waiting-panel');
     if (mobileWaitingPanel) {
         mobileWaitingPanel.classList.add('hidden');
-        mobileWaitingPanel.style.display = 'none';  // ADD THIS
+        mobileWaitingPanel.style.display = 'none';
     }
     
     const mobileLobby = document.getElementById('mobile-lobby');
     if (mobileLobby) {
-        mobileLobby.style.display = 'none';  // ADD THIS
+        mobileLobby.style.display = 'none';
     }
     
     createRoomPanel.classList.add('hidden');
@@ -1146,14 +939,11 @@ async function startMultiplayerGame(roomData) {
         await loadQuestionSets();
     }
 
-    // Start checking for disconnected players every 10 seconds
-    // const disconnectCheckInterval = setInterval(() => {
-    //     if (currentRoomCode) {
-    //         checkForDisconnectedPlayers();
-    //     } else {
-    //         clearInterval(disconnectCheckInterval);
-    //     }
-    // }, 10000);
+    // START PLAYER CENSUS MONITORING
+    startPlayerCensus();
+    
+    // START PRESENCE UPDATES
+    startPresenceUpdates();
     
     // Fetch fresh room data to get current timer setting
     const freshRoomDoc = await roomRef.get();
@@ -1191,9 +981,6 @@ async function startMultiplayerGame(roomData) {
     
     // Listen for round changes (forced sync)
     listenForRoundChanges();
-
-    // Monitor for player disconnections
-    monitorPlayerCount();
 }
 
 // ============================================
@@ -1301,29 +1088,50 @@ function positionMainMarker() {
 
 // Wait for all players to click continue
 function waitForNextRound() {
-    // Set 15 second timeout
-    resultsTimeout = setTimeout(async () => {
-        console.log('Results timeout - advancing anyway');
-        if (nextRoundListener) {
-            nextRoundListener();
-            nextRoundListener = null;
+    // Stop any existing results timer
+    if (resultsTimerInstance) {
+        resultsTimerInstance.stop();
+    }
+    
+    // Start 15-second auto-advance timer
+    resultsTimerInstance = new ResultsTimer(
+        (remaining) => {
+            // Update both waiting message timer and continue button
+            if (waitingTimer) {
+                waitingTimer.textContent = remaining;
+            }
+            
+            // Update for players who HAVEN'T clicked continue yet
+            if (!continueBtn.classList.contains('hidden')) {
+                continueBtn.textContent = `Continue (Auto-advancing in ${remaining}s)`;
+                if (remaining <= 5) {
+                    continueBtn.style.background = '#f44336'; // Red warning
+                }
+            }
+        },
+        async () => {
+            // Time's up - advance round or end game
+            console.log('Results timeout - advancing anyway');
+            
+            if (nextRoundListener) {
+                nextRoundListener();
+                nextRoundListener = null;
+            }
+            
+            // Update room to advance round OR end game
+            if (currentRound >= totalRounds) {
+                hideResultsModal();
+                await roomRef.update({ status: 'finished' });
+            } else {
+                await roomRef.update({ 
+                    currentRound: currentRound + 1,
+                    roundStartTime: firebase.firestore.FieldValue.serverTimestamp()
+                });
+            }
         }
-        if (autoAdvanceCountdown) {
-            clearInterval(autoAdvanceCountdown);
-        }
-        
-        // Update room to advance round OR end game
-        if (currentRound >= totalRounds) {
-            // Hide results first, then show game over
-            hideResultsModal();
-            await roomRef.update({ status: 'finished' });
-        } else {
-            await roomRef.update({ 
-                currentRound: currentRound + 1,
-                roundStartTime: firebase.firestore.FieldValue.serverTimestamp()
-            });
-        }
-    }, 15000);
+    );
+    
+    resultsTimerInstance.start();
     
     // Remove any existing listener
     if (nextRoundListener) {
@@ -1339,9 +1147,10 @@ function waitForNextRound() {
         
         if (allReady) {
             console.log('All players ready!');
-            clearTimeout(resultsTimeout);
-            if (autoAdvanceCountdown) {
-                clearInterval(autoAdvanceCountdown);
+            
+            // Stop the timer
+            if (resultsTimerInstance) {
+                resultsTimerInstance.stop();
             }
             
             // Unsubscribe from this listener
@@ -1352,7 +1161,6 @@ function waitForNextRound() {
             
             // Update room to advance round OR end game
             if (currentRound >= totalRounds) {
-                // Hide results first, then show game over
                 hideResultsModal();
                 await roomRef.update({ status: 'finished' });
             } else {
@@ -1731,8 +1539,15 @@ function hideResultsModal() {
         hideMobileResults();
         return;
     }
+    
     resultsOverlay.classList.add('hidden');
     resultsModal.classList.add('hidden');
+    
+    // Stop results timer
+    if (resultsTimerInstance) {
+        resultsTimerInstance.stop();
+        resultsTimerInstance = null;
+    }
     
     // Reset continue button state
     continueBtn.disabled = false;
@@ -1741,26 +1556,104 @@ function hideResultsModal() {
     continueBtn.style.background = '';
     waitingMessage.classList.add('hidden');
     endGameResultsBtn.classList.add('hidden');
-    
-    // Clear countdown
-    if (waitingCountdown) {
-        clearInterval(waitingCountdown);
-        waitingCountdown = null;
-    }
-    if (autoAdvanceCountdown) {
-        clearInterval(autoAdvanceCountdown);
-        autoAdvanceCountdown = null;
-    }
 }
 
 // Show game over screen
-function showGameOver() {
-    finalScoreDisplay.textContent = totalScore;
-    gameOverOverlay.classList.remove('hidden');
-    gameOverDiv.classList.remove('hidden');
+async function showGameOver() {
+    if (isMobile) {
+        // Mobile game over
+        mobileFinalScore.textContent = totalScore;
+        
+        // Get final leaderboard
+        if (currentRoomCode && playersRef) {
+            const playersSnapshot = await playersRef.get();
+            const allPlayersData = playersSnapshot.docs.map(doc => ({
+                name: doc.id,
+                ...doc.data()
+            }));
+            
+            // Sort by score
+            const sortedPlayers = allPlayersData.sort((a, b) => b.score - a.score);
+            
+            // Update mobile final leaderboard
+            mobileFinalLeaderboardList.innerHTML = '';
+            
+            sortedPlayers.forEach((player, index) => {
+                const item = document.createElement('div');
+                item.className = 'mobile-leaderboard-item';
+                
+                if (player.name === playerName) {
+                    item.classList.add('current');
+                }
+                
+                const rank = document.createElement('span');
+                rank.className = 'mobile-leaderboard-rank';
+                if (index === 0) rank.classList.add('first');
+                if (index === 1) rank.classList.add('second');
+                if (index === 2) rank.classList.add('third');
+                rank.textContent = '#' + (index + 1);
+                
+                const name = document.createElement('span');
+                name.className = 'mobile-leaderboard-name';
+                name.textContent = player.name;
+                
+                const score = document.createElement('span');
+                score.className = 'mobile-leaderboard-score';
+                score.textContent = player.score || 0;
+                
+                item.appendChild(rank);
+                item.appendChild(name);
+                item.appendChild(score);
+                
+                mobileFinalLeaderboardList.appendChild(item);
+            });
+        }
+        
+        // Show mobile game over screen
+        mobileGameOverOverlay.classList.remove('hidden');
+        mobileGameOverModal.classList.remove('hidden');
+        
+        // Hide game container
+        mobileGameContainer.classList.add('hidden');
+        
+    } else {
+        // Desktop game over
+        finalScoreDisplay.textContent = totalScore;
+        gameOverOverlay.classList.remove('hidden');
+        gameOverDiv.classList.remove('hidden');
+    }
     
-    // For multiplayer, the "New Game" button will reload to lobby
-    // For single-player, it calls startNewGame()
+    // Clean up listeners
+    if (roundChangeListener) {
+        roundChangeListener();
+        roundChangeListener = null;
+    }
+    if (submissionListener) {
+        submissionListener();
+        submissionListener = null;
+    }
+    if (nextRoundListener) {
+        nextRoundListener();
+        nextRoundListener = null;
+    }
+    if (playerCountListener) {
+        playerCountListener();
+        playerCountListener = null;
+    }
+    
+    // Stop timers
+    if (roundTimerInstance) {
+        roundTimerInstance.stop();
+        roundTimerInstance = null;
+    }
+    if (mobileRoundTimerInstance) {
+        mobileRoundTimerInstance.stop();
+        mobileRoundTimerInstance = null;
+    }
+    if (resultsTimerInstance) {
+        resultsTimerInstance.stop();
+        resultsTimerInstance = null;
+    }
 }
 
 // Clean up game and return to lobby
@@ -1789,31 +1682,6 @@ function cleanupAndReturnToLobby() {
     
     // Reload page to get fresh lobby
     location.reload();
-}
-
-// Start auto-advance countdown (shown to players who haven't clicked continue)
-function startAutoAdvanceCountdown() {
-    let countdown = 15;
-    waitingTimer.textContent = countdown; // Initialize the waiting message timer
-    
-    autoAdvanceCountdown = setInterval(() => {
-        countdown--;
-        
-        // Update waiting message timer (for players who clicked continue)
-        waitingTimer.textContent = countdown;
-        
-        // Update for players who HAVEN'T clicked continue yet
-        if (!continueBtn.classList.contains('hidden')) {
-            continueBtn.textContent = `Continue (Auto-advancing in ${countdown}s)`;
-            if (countdown <= 5) {
-                continueBtn.style.background = '#f44336'; // Red warning
-            }
-        }
-        
-        if (countdown <= 0) {
-            clearInterval(autoAdvanceCountdown);
-        }
-    }, 1000);
 }
 
 function waitForAllSubmissions() {
@@ -1902,12 +1770,7 @@ submitBtn.addEventListener('click', async () => {
     // Update display for single-player immediately
     if (!currentRoomCode) {
         scoreDisplay.textContent = totalScore;
-        console.log('Updated score display to:', totalScore); // DEBUG
-    }
-
-    // Update display for single-player immediately
-    if (!currentRoomCode) {
-        scoreDisplay.textContent = totalScore;
+        console.log('Updated score display to:', totalScore);
     }
 
     console.log('Distance:', distance, 'Score:', score, 'Total:', totalScore);
@@ -1931,19 +1794,28 @@ submitBtn.addEventListener('click', async () => {
         
         console.log('Submission saved to Firebase');
         
-        // Show waiting message in timer area (keep structure intact)
+        // Show waiting message with countdown based on round start time
         timerDisplay.classList.remove('hidden', 'warning');
-        let waitingCountdownMain = timeRemaining; // Capture the current remaining time
-        timerDisplay.innerHTML = `Waiting for other players... (<span id="waiting-timer-main">${waitingCountdownMain}</span>s)`;
-
-        // Start countdown in main timer area
+        
+        // Function to calculate remaining time from round start
+        const getWaitingTime = () => {
+            if (roundTimerInstance && roundTimerInstance.startTime && roundTimerInstance.duration) {
+                const elapsed = (Date.now() - roundTimerInstance.startTime) / 1000;
+                return Math.max(0, Math.ceil(roundTimerInstance.duration - elapsed));
+            }
+            return 0;
+        };
+        
+        let waitingTime = getWaitingTime();
+        timerDisplay.innerHTML = `Waiting for other players... (<span id="waiting-timer-main">${waitingTime}</span>s)`;
+        
         const waitingIntervalMain = setInterval(() => {
-            waitingCountdownMain--;
+            waitingTime = getWaitingTime();
             const timerSpan = document.getElementById('waiting-timer-main');
             if (timerSpan) {
-                timerSpan.textContent = waitingCountdownMain;
+                timerSpan.textContent = waitingTime;
             }
-            if (waitingCountdownMain <= 0) {
+            if (waitingTime <= 0) {
                 clearInterval(waitingIntervalMain);
             }
         }, 1000);
@@ -3020,7 +2892,7 @@ function listenForMatchmaking() {
                 await db.collection('matchmaking').doc(myQueueId).delete();
                 myQueueId = null;
             }
-            
+
             // Join the room
             currentRoomCode = data.roomCode;
             roomRef = db.collection('rooms').doc(currentRoomCode);
@@ -3030,18 +2902,17 @@ function listenForMatchmaking() {
             const playerDoc = await playersRef.doc(playerName).get();
             if (playerDoc.exists) {
                 isRoomCreator = playerDoc.data().isCreator || false;
-                
-                // Start appropriate monitoring
-                if (isRoomCreator) {
-                    startHostHeartbeat();
-                } else {
-                    startGuestMonitoring();
-                }
             }
-            
+
+            // START PLAYER CENSUS (replaces heartbeat/monitoring)
+            startPlayerCensus();
+
+            // START PRESENCE UPDATES
+            startPresenceUpdates();
+
             // Keep matchmaking panel visible until game starts
             // listenForGameStart will hide it when game begins
-            
+
             // Listen for game start
             listenForGameStart();
         }
@@ -3309,10 +3180,21 @@ const mobileExitResultsBtn = document.getElementById('mobile-exit-results-btn');
 const mobileWaitingMsg = document.getElementById('mobile-waiting-msg');
 const mobileWaitingTimer = document.getElementById('mobile-waiting-timer');
 
+// Mobile Game Over elements (add near other mobile DOM elements)
+const mobileGameOverOverlay = document.getElementById('mobile-game-over-overlay');
+const mobileGameOverModal = document.getElementById('mobile-game-over-modal');
+const mobileFinalScore = document.getElementById('mobile-final-score');
+const mobileFinalLeaderboardList = document.getElementById('mobile-final-leaderboard-list');
+const mobileReturnLobbyBtn = document.getElementById('mobile-return-lobby-btn');
+
+// Mobile return to lobby button
+mobileReturnLobbyBtn.addEventListener('click', () => {
+    location.reload();
+});
+
 // Mobile state
 let mobileCurrentSlice = 13;
 let mobileClickPosition = null;
-let mobileTimer = null;
 let mobileTimeRemaining = 30;
 
 // Show mobile or desktop lobby on load
@@ -3427,9 +3309,12 @@ mobileJoinBtn.addEventListener('click', async () => {
         
         // Listen for game start
         listenForGameStart();
-        
-        // Start guest monitoring
-        startGuestMonitoring();
+
+        // START PLAYER CENSUS in waiting room
+        startPlayerCensus();
+
+        // START PRESENCE UPDATES
+        startPresenceUpdates();
         
         // Add leave button handler
         const mobileLeaveBtn = document.getElementById('mobile-leave-waiting-btn');
@@ -3544,8 +3429,25 @@ mobileSubmitBtn.addEventListener('click', async () => {
     
     console.log('Mobile submission saved');
     
-    // Show waiting
-    mobileTimerValue.textContent = 'Waiting...';
+    // Show waiting with countdown
+    const getMobileWaitingTime = () => {
+        if (mobileRoundTimerInstance && mobileRoundTimerInstance.startTime && mobileRoundTimerInstance.duration) {
+            const elapsed = (Date.now() - mobileRoundTimerInstance.startTime) / 1000;
+            return Math.max(0, Math.ceil(mobileRoundTimerInstance.duration - elapsed));
+        }
+        return 0;
+    };
+    
+    let mobileWaitingTime = getMobileWaitingTime();
+    mobileTimerValue.textContent = `Waiting... ${mobileWaitingTime}s`;
+    
+    const mobileWaitingInterval = setInterval(() => {
+        mobileWaitingTime = getMobileWaitingTime();
+        mobileTimerValue.textContent = `Waiting... ${mobileWaitingTime}s`;
+        if (mobileWaitingTime <= 0) {
+            clearInterval(mobileWaitingInterval);
+        }
+    }, 1000);
     
     // Wait for all players
     waitForAllSubmissions();
@@ -3561,62 +3463,34 @@ mobileExitBtn.addEventListener('click', async () => {
     }
 });
 
-// Mobile timer - UPDATED to use server time
+// Mobile timer - UPDATED with ServerTimer
 function startMobileTimer(seconds) {
-    // Clear any existing timer
-    if (mobileTimer) clearInterval(mobileTimer);
+    console.log('startMobileTimer called with seconds:', seconds);
+    
+    // Stop any existing timer
+    if (mobileRoundTimerInstance) {
+        mobileRoundTimerInstance.stop();
+    }
     
     const timerElement = document.querySelector('.mobile-timer');
     timerElement.classList.remove('warning');
-    mobileTimerValue.textContent = seconds;
     
-    // Listen to room for server timestamp
-    const mobileTimerUnsubscribe = roomRef.onSnapshot((doc) => {
-        if (!doc.exists) {
-            clearInterval(mobileTimer);
-            if (mobileTimerUnsubscribe) mobileTimerUnsubscribe();
-            return;
-        }
-        
-        const data = doc.data();
-        const roundStartTime = data.roundStartTime?.toMillis();
-        const roundDuration = data.timerSeconds || seconds;
-        
-        if (!roundStartTime) return;
-        
-        // Clear any existing interval before starting new one
-        if (mobileTimer) clearInterval(mobileTimer);
-        
-        // Calculate time remaining based on server time
-        const updateTimer = () => {
-            const now = Date.now();
-            const elapsed = (now - roundStartTime) / 1000; // seconds elapsed
-            mobileTimeRemaining = Math.max(0, Math.ceil(roundDuration - elapsed));
-            
-            mobileTimerValue.textContent = mobileTimeRemaining;
+    mobileRoundTimerInstance = new ServerTimer(
+        roomRef,
+        (remaining) => {
+            mobileTimerValue.textContent = remaining;
             
             // Warning animation at 10 seconds
-            if (mobileTimeRemaining <= 10) {
+            if (remaining <= 10) {
                 timerElement.classList.add('warning');
             }
-            
-            // Time's up
-            if (mobileTimeRemaining <= 0) {
-                clearInterval(mobileTimer);
-                if (mobileTimerUnsubscribe) mobileTimerUnsubscribe();
-                autoSubmitMobileRound();
-            }
-        };
-        
-        // Update immediately
-        updateTimer();
-        
-        // Then update every 100ms for smooth countdown
-        mobileTimer = setInterval(updateTimer, 100);
-    });
+        },
+        () => {
+            autoSubmitMobileRound();
+        }
+    );
     
-    // Store unsubscribe function for cleanup
-    window.mobileTimerUnsubscribe = mobileTimerUnsubscribe;
+    mobileRoundTimerInstance.start(seconds);
 }
 
 // Stop mobile timer - UPDATED to clean up listener
@@ -3755,7 +3629,7 @@ function hideMobileResults() {
 function startMobileGame(roomData) {
     console.log('Starting mobile game');
     
-    // STOP HOST PRESENCE UPDATES
+    // STOP HEARTBEAT MONITORING
     if (window.hostPresenceInterval) {
         clearInterval(window.hostPresenceInterval);
         window.hostPresenceInterval = null;
@@ -3768,17 +3642,23 @@ function startMobileGame(roomData) {
     
     // Hide mobile lobby AND waiting panel
     mobileLobby.classList.add('hidden');
-    mobileLobby.style.display = 'none';  // FORCE HIDE
+    mobileLobby.style.display = 'none';
     
     const mobileWaitingPanel = document.getElementById('mobile-waiting-panel');
     if (mobileWaitingPanel) {
         mobileWaitingPanel.classList.add('hidden');
-        mobileWaitingPanel.style.display = 'none';  // FORCE HIDE
+        mobileWaitingPanel.style.display = 'none';
     }
     
     // Show game container
     mobileGameContainer.classList.remove('hidden');
-    mobileGameContainer.style.display = 'flex';  // FORCE SHOW
+    mobileGameContainer.style.display = 'flex';
+    
+    // START PLAYER CENSUS MONITORING
+    startPlayerCensus();
+    
+    // START PRESENCE UPDATES
+    startPresenceUpdates();
     
     // Reset state
     currentRound = 1;
@@ -3791,9 +3671,180 @@ function startMobileGame(roomData) {
     // Start timer
     startMobileTimer(roomData.timerSeconds);
     
-    // ADD THIS: Listen for round changes (same as desktop)
+    // Listen for round changes (same as desktop)
     listenForRoundChanges();
+}
+
+// ============================================
+// SERVER-SIDE PLAYER CENSUS SYSTEM
+// ============================================
+
+let playerCensusListener = null;
+let lastKnownPlayerCount = 0;
+let lastKnownPlayers = new Set();
+
+// Monitor players in room (works for both waiting and playing states)
+function startPlayerCensus() {
+    if (!currentRoomCode || !playersRef) return;
     
-    // ADD THIS: Monitor for player disconnections
-    monitorPlayerCount();
+    // Clean up old listener
+    if (playerCensusListener) {
+        playerCensusListener();
+        playerCensusListener = null;
+    }
+    
+    console.log('Starting player census monitoring');
+    
+    playerCensusListener = playersRef.onSnapshot(async (snapshot) => {
+        const currentPlayerCount = snapshot.size;
+        const currentPlayers = new Set(snapshot.docs.map(doc => doc.id));
+        
+        // Initialize on first run
+        if (lastKnownPlayerCount === 0) {
+            lastKnownPlayerCount = currentPlayerCount;
+            lastKnownPlayers = currentPlayers;
+            console.log('Census initialized with', currentPlayerCount, 'players');
+            return;
+        }
+        
+        // Check if anyone left
+        if (currentPlayerCount < lastKnownPlayerCount) {
+            const playersLost = lastKnownPlayerCount - currentPlayerCount;
+            
+            // Find who left
+            const playersWhoLeft = [];
+            lastKnownPlayers.forEach(playerName => {
+                if (!currentPlayers.has(playerName)) {
+                    playersWhoLeft.push(playerName);
+                }
+            });
+            
+            console.log('Players left:', playersWhoLeft);
+            
+            // Check if it was the host
+            const hostLeft = playersWhoLeft.some(name => {
+                const playerDoc = snapshot.docs.find(doc => doc.id === name);
+                // If we can't find them, check our last known state
+                // Host is identified by isCreator field
+                return false; // We'll check this differently
+            });
+            
+            // Actually check if host is still in the room
+            const hostStillPresent = snapshot.docs.some(doc => doc.data().isCreator === true);
+            
+            if (!hostStillPresent) {
+                // Host left
+                console.log('Host has left the game');
+                
+                // Get room state
+                const roomDoc = await roomRef.get();
+                if (roomDoc.exists) {
+                    const roomData = roomDoc.data();
+                    
+                    if (roomData.status === 'waiting') {
+                        // In lobby - close the room
+                        alert('Host has left. Room is closing.');
+                        
+                        // Delete all players
+                        const deletePromises = snapshot.docs.map(doc => doc.ref.delete());
+                        await Promise.all(deletePromises);
+                        
+                        // Delete room
+                        await roomRef.delete();
+                        
+                        // Return to lobby
+                        location.reload();
+                        return;
+                    } else if (roomData.status === 'playing') {
+                        // During game - end game for everyone
+                        alert('Host has disconnected. Game is ending.');
+                        
+                        // Mark game as finished
+                        await roomRef.update({ status: 'finished' });
+                        
+                        // Don't reload yet - let showGameOver handle it
+                        return;
+                    }
+                }
+            } else {
+                // Guest(s) left during game
+                if (roomRef) {
+                    const roomDoc = await roomRef.get();
+                    if (roomDoc.exists && roomDoc.data().status === 'playing') {
+                        // Show non-invasive notification
+                        showNotification(`${playersWhoLeft.join(', ')} disconnected (${currentPlayerCount} remaining)`);
+                        
+                        // If only host remains, end the game
+                        if (currentPlayerCount === 1) {
+                            alert('All other players have disconnected. Returning to lobby.');
+                            
+                            // Clean up and reload
+                            if (playerCensusListener) {
+                                playerCensusListener();
+                                playerCensusListener = null;
+                            }
+                            
+                            location.reload();
+                            return;
+                        }
+                    } else if (roomDoc.exists && roomDoc.data().status === 'waiting') {
+                        // Guest left during waiting - just show notification
+                        showNotification(`${playersWhoLeft.join(', ')} left the room`);
+                    }
+                }
+            }
+        }
+        
+        // Update our tracking
+        lastKnownPlayerCount = currentPlayerCount;
+        lastKnownPlayers = currentPlayers;
+    });
+}
+
+// Stop player census
+function stopPlayerCensus() {
+    if (playerCensusListener) {
+        playerCensusListener();
+        playerCensusListener = null;
+    }
+    lastKnownPlayerCount = 0;
+    lastKnownPlayers = new Set();
+}
+
+// Update player's last seen timestamp (lightweight presence)
+async function updatePlayerPresence() {
+    if (!currentRoomCode || !playerName || !playersRef) return;
+    
+    try {
+        await playersRef.doc(playerName).update({
+            lastSeen: firebase.firestore.FieldValue.serverTimestamp()
+        });
+    } catch (error) {
+        console.log('Presence update failed:', error);
+    }
+}
+
+// Start periodic presence updates (every 10 seconds)
+let presenceUpdateInterval = null;
+
+function startPresenceUpdates() {
+    // Clear any existing interval
+    if (presenceUpdateInterval) {
+        clearInterval(presenceUpdateInterval);
+    }
+    
+    // Update immediately
+    updatePlayerPresence();
+    
+    // Then update every 10 seconds
+    presenceUpdateInterval = setInterval(() => {
+        updatePlayerPresence();
+    }, 10000);
+}
+
+function stopPresenceUpdates() {
+    if (presenceUpdateInterval) {
+        clearInterval(presenceUpdateInterval);
+        presenceUpdateInterval = null;
+    }
 }
