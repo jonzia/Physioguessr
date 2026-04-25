@@ -3790,4 +3790,10 @@ function startMobileGame(roomData) {
     
     // Start timer
     startMobileTimer(roomData.timerSeconds);
+    
+    // ADD THIS: Listen for round changes (same as desktop)
+    listenForRoundChanges();
+    
+    // ADD THIS: Monitor for player disconnections
+    monitorPlayerCount();
 }
