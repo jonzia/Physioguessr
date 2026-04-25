@@ -508,7 +508,8 @@ createRoomBtn.addEventListener('click', async () => {
         name: playerName,
         joinedAt: firebase.firestore.FieldValue.serverTimestamp(),
         isCreator: true,
-        score: 0
+        score: 0,
+        lastSeen: firebase.firestore.FieldValue.serverTimestamp()
     });
     
     // Listen for players joining
@@ -628,7 +629,8 @@ joinRoomSubmitBtn.addEventListener('click', async () => {
             name: playerName,
             joinedAt: firebase.firestore.FieldValue.serverTimestamp(),
             isCreator: false,
-            score: 0
+            score: 0,
+            lastSeen: firebase.firestore.FieldValue.serverTimestamp()
         });
 
         console.log('Joined successfully, showing waiting panel');
@@ -3286,12 +3288,12 @@ async function createMatchFromQueue(playerDocs) {
             const uniquePlayerId = playerDocs[i].id;  // Use queue document ID for uniqueness
             
             await newPlayersRef.doc(uniquePlayerId).set({
-                name: data.displayName,  // Display name for UI
-                playerId: data.playerId,  // Store actual UID
+                name: data.displayName,
+                playerId: data.playerId,
                 joinedAt: firebase.firestore.FieldValue.serverTimestamp(),
                 isCreator: i === 0,
                 score: 0,
-                lastSeen: firebase.firestore.FieldValue.serverTimestamp()
+                lastSeen: firebase.firestore.FieldValue.serverTimestamp() // ✅ ADD THIS
             });
         }
         
@@ -3576,7 +3578,8 @@ mobileJoinBtn.addEventListener('click', async () => {
             joinedAt: firebase.firestore.FieldValue.serverTimestamp(),
             isCreator: false,
             score: 0,
-            isMobile: true
+            isMobile: true,
+            lastSeen: firebase.firestore.FieldValue.serverTimestamp() // ✅ ADD THIS
         });
         
         console.log('Mobile user joined room:', roomCode);
