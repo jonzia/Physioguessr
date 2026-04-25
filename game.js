@@ -1115,8 +1115,6 @@ function listenForRoundChanges() {
 }
 
 async function startMultiplayerGame(roomData) {
-    console.log('startMultiplayerGame called with roomData:', roomData);
-
     // Prevent double-starting
     if (hasGameStarted) {
         console.log('Game already started, ignoring duplicate call');
@@ -1126,7 +1124,14 @@ async function startMultiplayerGame(roomData) {
     
     console.log('startMultiplayerGame called');
     
-    // ADD - Check if presenter mode
+    // Unsubscribe from game start listener
+    if (gameStartListener) {
+        gameStartListener();
+        gameStartListener = null;
+        console.log('Unsubscribed from game start listener');
+    }
+    
+    // Check if presenter mode
     isPresenterMode = roomData.presenterMode || false;
     const isPresenter = isPresenterMode && isRoomCreator;
     console.log('Presenter mode:', isPresenterMode, 'Is presenter:', isPresenter);
@@ -4576,7 +4581,7 @@ mobileExitResultsBtn.addEventListener('click', async () => {
 // Hide mobile results
 function hideMobileResults() {
     console.log('hideMobileResults called');
-    
+
     mobileResultsOverlay.classList.add('hidden');
     mobileResultsModal.classList.add('hidden');
     mobileContinueBtn.disabled = false;
@@ -4587,6 +4592,13 @@ function hideMobileResults() {
 // Start mobile game
 function startMobileGame(roomData) {
     console.log('Starting mobile game');
+    
+    // Unsubscribe from game start listener (we're already in the game!)
+    if (gameStartListener) {
+        gameStartListener();
+        gameStartListener = null;
+        console.log('Unsubscribed from game start listener');
+    }
 
     // Set presenter mode flag
     isPresenterMode = roomData.presenterMode || false;
