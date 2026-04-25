@@ -925,19 +925,11 @@ function listenForRoundChanges() {
     lastSeenRound = currentRound;
     
     roundChangeListener = roomRef.onSnapshot((doc) => {
-    const roomData = doc.data();
-    
-    console.log('Round change snapshot:', {
-        currentRound: roomData.currentRound,
-        lastSeen: lastSeenRound,
-        hasRoundStartTime: !!roomData.roundStartTime,
-        roundStartTime: roomData.roundStartTime,
-        timerSeconds: roomData.timerSeconds
-    });
-    
-    // If room's current round is ahead of what we've processed, force advance
-    if (roomData.currentRound > lastSeenRound && roomData.currentRound > currentRound) {
-        console.log('Forced to advance to round', roomData.currentRound);
+        const roomData = doc.data();
+        
+        // If room's current round is ahead of what we've processed, force advance
+        if (roomData.currentRound > lastSeenRound && roomData.currentRound > currentRound) {
+            console.log('Forced to advance to round', roomData.currentRound);
             lastSeenRound = roomData.currentRound;
             
             // Clean up countdown
@@ -962,20 +954,8 @@ function listenForRoundChanges() {
             // Hide results and advance
             hideResultsModal();
             currentRound = roomData.currentRound;
-            currentRoundDisplay.textContent = currentRound;
             hasSubmittedThisRound = false;
-            submitBtn.disabled = false;
             
-            // UPDATE SCORE DISPLAY HERE
-            scoreDisplay.textContent = totalScore;
-            console.log('listenForRoundChanges updated score to:', totalScore);
-            
-            loadNewQuestion();
-            // Wait a moment for Firebase to fully update roundStartTime
-            setTimeout(() => {
-                startRoundTimer(roomData.timerSeconds);
-            }, 200);  // 200ms delay
-
             if (isMobile) {
                 mobileRound.textContent = currentRound;
                 mobileSubmitBtn.disabled = false;
@@ -986,7 +966,20 @@ function listenForRoundChanges() {
                 mobileMarker.classList.remove('show');
                 
                 loadNewQuestion();
-                startMobileTimer(roomData.timerSeconds);
+                
+                // WAIT for roundStartTime to be set before starting timer
+                const waitForMobileTimer = setInterval(async () => {
+                    const freshDoc = await roomRef.get();
+                    const freshData = freshDoc.data();
+                    
+                    if (freshData.roundStartTime) {
+                        clearInterval(waitForMobileTimer);
+                        startMobileTimer(freshData.timerSeconds);
+                    }
+                }, 100);
+                
+                // Timeout after 5 seconds
+                setTimeout(() => clearInterval(waitForMobileTimer), 5000);
             } else {
                 currentRoundDisplay.textContent = currentRound;
                 submitBtn.disabled = false;
@@ -996,7 +989,20 @@ function listenForRoundChanges() {
                 console.log('listenForRoundChanges updated score to:', totalScore);
                 
                 loadNewQuestion();
-                startRoundTimer(roomData.timerSeconds);
+                
+                // WAIT for roundStartTime to be set before starting timer
+                const waitForTimer = setInterval(async () => {
+                    const freshDoc = await roomRef.get();
+                    const freshData = freshDoc.data();
+                    
+                    if (freshData.roundStartTime) {
+                        clearInterval(waitForTimer);
+                        startRoundTimer(freshData.timerSeconds);
+                    }
+                }, 100);
+                
+                // Timeout after 5 seconds
+                setTimeout(() => clearInterval(waitForTimer), 5000);
             }
         }
         
