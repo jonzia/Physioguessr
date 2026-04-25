@@ -795,15 +795,13 @@ leaveWaitingBtn.addEventListener('click', async () => {
 
 // Start round timer - SIMPLIFIED with single fetch
 function startRoundTimer(seconds) {
+    console.log('startRoundTimer called with seconds:', seconds);
+    
     // Clear any existing timer
     if (roundTimer) clearInterval(roundTimer);
     
     timerDisplay.classList.remove('hidden', 'warning');
-    
-    // Reset timer text format
     timerDisplay.innerHTML = `Time: <span id="timer-value">${seconds}</span>s`;
-    
-    // Re-get the element since we changed innerHTML
     const timerValueSpan = document.getElementById('timer-value');
     
     // Fetch room data ONCE to get the round start time
@@ -814,11 +812,17 @@ function startRoundTimer(seconds) {
         }
         
         const data = doc.data();
+        console.log('Timer room data:', {
+            hasRoundStartTime: !!data.roundStartTime,
+            roundStartTime: data.roundStartTime,
+            timerSeconds: data.timerSeconds
+        });
+        
         const roundStartTime = data.roundStartTime?.toMillis();
         const roundDuration = data.timerSeconds || seconds;
         
         if (!roundStartTime) {
-            console.error('No roundStartTime in room data');
+            console.error('No roundStartTime in room data', data);
             return;
         }
         
@@ -921,11 +925,19 @@ function listenForRoundChanges() {
     lastSeenRound = currentRound;
     
     roundChangeListener = roomRef.onSnapshot((doc) => {
-        const roomData = doc.data();
-        
-        // If room's current round is ahead of what we've processed, force advance
-        if (roomData.currentRound > lastSeenRound && roomData.currentRound > currentRound) {
-            console.log('Forced to advance to round', roomData.currentRound);
+    const roomData = doc.data();
+    
+    console.log('Round change snapshot:', {
+        currentRound: roomData.currentRound,
+        lastSeen: lastSeenRound,
+        hasRoundStartTime: !!roomData.roundStartTime,
+        roundStartTime: roomData.roundStartTime,
+        timerSeconds: roomData.timerSeconds
+    });
+    
+    // If room's current round is ahead of what we've processed, force advance
+    if (roomData.currentRound > lastSeenRound && roomData.currentRound > currentRound) {
+        console.log('Forced to advance to round', roomData.currentRound);
             lastSeenRound = roomData.currentRound;
             
             // Clean up countdown
