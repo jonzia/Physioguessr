@@ -493,9 +493,6 @@ createRoomBtn.addEventListener('click', async () => {
 
     startHostStaleCheck();
 
-    // Listen for game start (for when host clicks start game)
-    listenForGameStart();  // ADD THIS LINE
-
     console.log('Room created:', roomCode);
 });
 
@@ -723,9 +720,12 @@ startGameBtn.addEventListener('click', async () => {
     
     console.log('Game started with timer:', timerValue);
     
-    // Don't start game directly - let listenForGameStart handle it
-    // This ensures both host and guests start at the same time
-    // The listener will trigger when status changes to 'playing'
+    // Get fresh room data
+    const freshRoomDoc = await roomRef.get();
+    const freshRoomData = freshRoomDoc.data();
+    
+    // Start the game immediately for host (RESTORED)
+    startMultiplayerGame(freshRoomData);
 });
 
 function listenForGameStart() {
