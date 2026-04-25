@@ -489,10 +489,6 @@ createRoomBtn.addEventListener('click', async () => {
     currentRoomCode = roomCode;
     isRoomCreator = true;
     roomCodeDisplay.textContent = roomCode;
-
-    // Get presenter mode state
-    const presenterMode = presenterModeCheckbox.checked;
-    console.log('Presenter mode checkbox checked:', presenterMode);
     
     // Create room in Firebase
     roomRef = db.collection('rooms').doc(roomCode);
@@ -504,8 +500,7 @@ createRoomBtn.addEventListener('click', async () => {
         status: 'waiting',
         currentRound: 0,
         questionOrder: [],
-        hostLastSeen: firebase.firestore.FieldValue.serverTimestamp(),
-        presenterMode: presenterMode
+        hostLastSeen: firebase.firestore.FieldValue.serverTimestamp()
     });
 
     console.log('Room created with presenterMode:', presenterMode);
@@ -732,6 +727,9 @@ startGameBtn.addEventListener('click', async () => {
     const timerValue = parseInt(timerSetting.value);
     const setId = questionSetSelect.value;
     const questions = getQuestionsFromSet(setId);
+
+    const presenterMode = presenterModeCheckbox.checked;
+    console.log('Starting game with presenter mode:', presenterMode);
     
     console.log('Starting game with timer:', timerValue, 'and set:', setId);
     
@@ -748,6 +746,7 @@ startGameBtn.addEventListener('click', async () => {
         questionOrder: shuffled,
         timerSeconds: timerValue,
         questionSetId: setId,
+        presenterMode: presenterMode,
         roundStartTime: firebase.firestore.FieldValue.serverTimestamp()
     });
     
@@ -756,7 +755,7 @@ startGameBtn.addEventListener('click', async () => {
     // Get fresh room data
     const freshRoomDoc = await roomRef.get();
     const freshRoomData = freshRoomDoc.data();
-    console.log('Fresh room data before starting:', freshRoomData);
+    console.log('Fresh room data:', freshRoomData);
     
     // Start the game immediately for host (RESTORED)
     startMultiplayerGame(freshRoomData);
