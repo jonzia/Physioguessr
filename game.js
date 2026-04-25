@@ -2427,7 +2427,7 @@ function populateUserSetsDropdown(selectElement) {
         .forEach(set => {
             const option = document.createElement('option');
             option.value = set.id;
-            option.textContent = `$${set.name} ($${set.questions.length} questions)`;
+            option.textContent = `${set.name} (${set.questions.length} questions)`;
             selectElement.appendChild(option);
         });
 }
@@ -3198,7 +3198,8 @@ async function createMatchFromQueue(playerDocs) {
                 name: data.playerName,
                 joinedAt: firebase.firestore.FieldValue.serverTimestamp(),
                 isCreator: i === 0,
-                score: 0
+                score: 0,
+                lastSeen: firebase.firestore.FieldValue.serverTimestamp()  // ADD THIS LINE
             });
         }
         
@@ -3671,7 +3672,7 @@ mobileSubmitBtn.addEventListener('click', async () => {
             const remaining = Math.max(0, Math.ceil(roundDuration - elapsed));
             
             // Just show the number (no "Waiting..." text on mobile)
-            mobileTimerValue.textContent = `${remaining}s`;
+            mobileTimerValue.textContent = `${remaining}`;
             
             if (remaining <= 0) {
                 if (mobileWaitingInterval) {
