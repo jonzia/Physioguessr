@@ -2475,8 +2475,9 @@ function waitForAllSubmissions() {
             const questions = getQuestionsFromSet(setId);
             const question = questions ? questions.find(q => q.id === questionId) : null;
             
-            // Get all players' data
-            const allPlayersData = players.map(doc => ({
+            // Get FRESH player data from server, not from snapshot
+            const freshPlayersSnapshot = await playersRef.get({ source: 'server' });
+            const allPlayersData = freshPlayersSnapshot.docs.map(doc => ({
                 id: doc.id,
                 name: doc.data().name,
                 ...doc.data()
