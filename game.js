@@ -2435,6 +2435,8 @@ function waitForAllSubmissions() {
 
 // Listen for presenter to trigger results (guests only)
 function listenForPresenterResults() {
+    console.log('listenForPresenterResults called - isPresenterMode:', isPresenterMode, 'isRoomCreator:', isRoomCreator);
+    
     if (!isPresenterMode || isRoomCreator) return;
     
     // Use a persistent listener, not one that unsubscribes
@@ -4739,8 +4741,8 @@ function startHostStaleCheck() {
     if (!isRoomCreator || !playersRef) return;
     
     // MODIFY - Use longer timeout in presenter mode instead of disabling
-    const staleTimeout = isPresenterMode ? 30000 : 5000; // 30s for presenter, 5s for normal
-    const checkInterval_time = isPresenterMode ? 5000 : 1000; // Check every 5s in presenter mode
+    const staleTimeout = isPresenterMode ? 10000 : 5000; // 10s for presenter, 5s for normal
+    const checkInterval_time = isPresenterMode ? 2000 : 1000; // Check every 2s in presenter mode
     
     const checkInterval = setInterval(async () => {
         if (!currentRoomCode || !isRoomCreator) {
@@ -4786,8 +4788,8 @@ function startGuestHostMonitor() {
     if (isRoomCreator || !playersRef) return;
     
     // MODIFY - Use longer timeout in presenter mode
-    const staleTimeout = isPresenterMode ? 30000 : 5000;
-    const checkInterval_time = isPresenterMode ? 5000 : 1000;
+    const staleTimeout = isPresenterMode ? 10000 : 5000;
+    const checkInterval_time = isPresenterMode ? 2000 : 1000;
     
     const monitorInterval = setInterval(async () => {
         if (!currentRoomCode || isRoomCreator) {
@@ -4883,7 +4885,9 @@ function startPresenceUpdates() {
         }).catch(err => console.log('Host timestamp update failed:', err));
     }
     
-    // REDUCE from 2000 to 1000ms (update every 1 second)
+    // Faster updates in presenter mode (every 2s instead of 3s)
+    const updateInterval = isPresenterMode ? 2000 : 3000;
+    
     presenceUpdateInterval = setInterval(() => {
         updatePlayerPresence();
         
@@ -4892,7 +4896,7 @@ function startPresenceUpdates() {
                 hostLastSeen: firebase.firestore.FieldValue.serverTimestamp()
             }).catch(err => console.log('Host timestamp update failed:', err));
         }
-    }, 1000); // 1 second updates
+    }, updateInterval);
 }
 
 function stopPresenceUpdates() {
