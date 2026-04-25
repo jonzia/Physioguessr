@@ -487,6 +487,9 @@ createRoomBtn.addEventListener('click', async () => {
 
     startHostStaleCheck();
 
+    // Listen for game start (for when host clicks start game)
+    listenForGameStart();  // ADD THIS LINE
+
     console.log('Room created:', roomCode);
 });
 
@@ -682,7 +685,8 @@ startGameBtn.addEventListener('click', async () => {
             name: latestPlayerName,
             joinedAt: firebase.firestore.FieldValue.serverTimestamp(),
             isCreator: true,
-            score: 0
+            score: 0,
+            lastSeen: firebase.firestore.FieldValue.serverTimestamp()
         });
         
         playerName = latestPlayerName;
@@ -698,6 +702,9 @@ startGameBtn.addEventListener('click', async () => {
     const questionIds = questions.map(q => q.id);
     const shuffled = questionIds.sort(() => Math.random() - 0.5).slice(0, 5);
     
+    // RESET hasGameStarted flag
+    hasGameStarted = false;
+    
     // UPDATED: Set roundStartTime when starting game
     await roomRef.update({
         status: 'playing',
@@ -710,18 +717,10 @@ startGameBtn.addEventListener('click', async () => {
     
     console.log('Game started with timer:', timerValue);
     
-    // Get fresh room data
-    const freshRoomDoc = await roomRef.get();
-    const freshRoomData = freshRoomDoc.data();
-    
-    // Start the game immediately for host
-    startMultiplayerGame(freshRoomData);
+    // Don't start game directly - let listenForGameStart handle it
+    // This ensures both host and guests start at the same time
+    // The listener will trigger when status changes to 'playing'
 });
-
-// Creator also needs to listen for their own game start
-if (isRoomCreator) {
-    listenForGameStart();
-}
 
 function listenForGameStart() {
     console.log('[listenForGameStart] Setting up listener, hasGameStarted:', hasGameStarted);
