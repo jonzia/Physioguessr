@@ -2439,7 +2439,7 @@ function listenForPresenterResults() {
     
     if (!isPresenterMode || isRoomCreator) return;
     
-    // Use a persistent listener, not one that unsubscribes
+    // Use a persistent listener
     const resultsListener = roomRef.onSnapshot(async (doc) => {
         if (!doc.exists) return;
         
@@ -2478,15 +2478,27 @@ function listenForPresenterResults() {
                 return;
             }
             
-            // Show results for guest (with score/distance)
-            showResultsModal(myRoundData.score, myRoundData.distance, allPlayersData);
-            
-            // Hide continue button for guests, show waiting message
-            continueBtn.classList.add('hidden');
-            waitingMessage.classList.remove('hidden');
-            waitingMessage.innerHTML = 'Waiting for presenter to continue...';
-            
-            // KEEP LISTENER ACTIVE for next round
+            // Check if mobile or desktop
+            if (isMobile) {
+                // Show mobile results
+                showMobileResults(myRoundData.score, myRoundData.distance, allPlayersData);
+                
+                // Hide continue button, show waiting message
+                mobileContinueBtn.classList.add('hidden');
+                mobileWaitingMsg.classList.remove('hidden');
+                mobileWaitingMsg.innerHTML = 'Waiting for presenter to continue...';
+                
+                // Show exit button
+                mobileExitResultsBtn.classList.remove('hidden');
+            } else {
+                // Show desktop results
+                showResultsModal(myRoundData.score, myRoundData.distance, allPlayersData);
+                
+                // Hide continue button for guests, show waiting message
+                continueBtn.classList.add('hidden');
+                waitingMessage.classList.remove('hidden');
+                waitingMessage.innerHTML = 'Waiting for presenter to continue...';
+            }
         }
     });
 }
@@ -4536,6 +4548,11 @@ function startMobileGame(roomData) {
         const mobileTimerElement = document.querySelector('.mobile-timer');
         if (mobileTimerElement) {
             mobileTimerElement.style.display = 'none';
+        }
+        
+        // Start listening for presenter to show results (guests only)
+        if (!isRoomCreator) {
+            listenForPresenterResults();
         }
     } else {
         // Normal mode - start timer
