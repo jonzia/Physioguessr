@@ -3111,23 +3111,32 @@ function listenForMatchmaking() {
                 myQueueId = null;
             }
 
-            // Join the room - USE QUEUE DOC ID AS PLAYER NAME
+            // Join the room
             currentRoomCode = data.roomCode;
             roomRef = db.collection('rooms').doc(currentRoomCode);
             playersRef = roomRef.collection('players');
             
-            // Use the queue document ID to find our player document
-            const playerDocId = doc.id;
-            playerName = playerDocId;  // THIS IS KEY - use queue doc ID as player identifier
+            // Find OUR player document in the room (it was already created by the matcher)
+            // We need to find which document belongs to us by matching playerId
+            const playersSnapshot = await playersRef.get();
+            const myPlayerDoc = playersSnapshot.docs.find(doc => doc.data().playerId === currentUser.uid);
+            
+            if (!myPlayerDoc) {
+                console.error('Could not find my player document in room!');
+                alert('Error joining match. Please try again.');
+                matchmakingPanel.classList.add('hidden');
+                lobbyMenu.classList.remove('hidden');
+                return;
+            }
+            
+            // Set playerName to the document ID
+            playerName = myPlayerDoc.id;
+            isRoomCreator = myPlayerDoc.data().isCreator || false;
+            
+            console.log('My player doc ID:', playerName, 'isCreator:', isRoomCreator);
 
             // RESET game started flag
-            hasGameStarted = false;  // ADD THIS LINE
-
-            // Check if we're the creator
-            const playerDoc = await playersRef.doc(playerDocId).get();
-            if (playerDoc.exists) {
-                isRoomCreator = playerDoc.data().isCreator || false;
-            }
+            hasGameStarted = false;
 
             // START PLAYER CENSUS (replaces heartbeat/monitoring)
             startPlayerCensus();
