@@ -521,8 +521,6 @@ createRoomBtn.addEventListener('click', async () => {
     // START PRESENCE UPDATES
     startPresenceUpdates();
 
-    startHostStaleCheck();
-
     console.log('Room created:', roomCode);
 });
 
@@ -668,9 +666,6 @@ joinRoomSubmitBtn.addEventListener('click', async () => {
 
         // START PRESENCE UPDATES
         startPresenceUpdates();
-
-        // START GUEST HOST MONITOR (guest only)
-        startGuestHostMonitor();
 
         hideLobbyLoading();
 
@@ -1130,6 +1125,13 @@ async function startMultiplayerGame(roomData) {
         updatePlayerPresence();
     }, 3000); // 3 seconds during game
     updatePlayerPresence(); // Immediate first update
+
+    // Start stale detection ONLY in-game
+    if (isRoomCreator) {
+        startHostStaleCheck();
+    } else {
+        startGuestHostMonitor();
+    }
     
     // Fetch fresh room data to get current timer setting
     const freshRoomDoc = await roomRef.get();
@@ -3995,6 +3997,13 @@ function startMobileGame(roomData) {
         updatePlayerPresence();
     }, 3000); // 3 seconds during game
     updatePlayerPresence(); // Immediate first update
+
+    // Start stale detection ONLY in-game
+    if (isRoomCreator) {
+        startHostStaleCheck();
+    } else {
+        startGuestHostMonitor();
+    }
     
     // Reset state
     currentRound = 1;
