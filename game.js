@@ -1056,23 +1056,11 @@ window.addEventListener('resize', () => {
 // Clean up on page unload
 window.addEventListener('beforeunload', async (e) => {
     if (currentRoomCode && playerName && playersRef) {
-        // For host leaving waiting room, we need to clean up synchronously
-        if (isRoomCreator && roomRef) {
-            // Use navigator.sendBeacon for more reliable cleanup
-            const beaconData = JSON.stringify({
-                action: 'closeRoom',
-                roomCode: currentRoomCode,
-                playerName: playerName
-            });
-            
-            // This is more reliable than async cleanup on unload
-            navigator.sendBeacon('/api/cleanup', beaconData); // You'd need a server endpoint
-            
-            // But also try the direct method
-            handlePlayerDisconnect();
-        } else {
-            // Regular player leaving
-            handlePlayerDisconnect();
+        try {
+            // Remove player from room
+            await playersRef.doc(playerName).delete();
+        } catch (error) {
+            console.log('Cleanup error:', error);
         }
     }
 });
@@ -1733,13 +1721,12 @@ function waitForAllSubmissions() {
             
             showResultsModal(myRoundData.score, myRoundData.distance, allPlayersData);
             
-            // Start the auto-advance countdown AND timeout immediately for all players
-            startAutoAdvanceCountdown();
-            waitForNextRound(); // This starts the timeout and listener
+            // Start the 15-second auto-advance timer immediately for all players
+            // This is handled in waitForNextRound()
+            waitForNextRound();
         }
     });
 }
-
 
 // Submit guess
 submitBtn.addEventListener('click', async () => {
@@ -1797,35 +1784,45 @@ submitBtn.addEventListener('click', async () => {
             },
             score: totalScore
         });
-        
+
         console.log('Submission saved to Firebase');
-        
-        // Show waiting message with countdown based on round start time
+
+        // Show waiting message with server-synced countdown
         timerDisplay.classList.remove('hidden', 'warning');
-        
-        // Function to calculate remaining time from round start
-        const getWaitingTime = () => {
-            if (roundTimerInstance && roundTimerInstance.startTime && roundTimerInstance.duration) {
-                const elapsed = (Date.now() - roundTimerInstance.startTime) / 1000;
-                return Math.max(0, Math.ceil(roundTimerInstance.duration - elapsed));
-            }
-            return 0;
-        };
-        
-        let waitingTime = getWaitingTime();
-        timerDisplay.innerHTML = `Waiting for other players... (<span id="waiting-timer-main">${waitingTime}</span>s)`;
-        
-        const waitingIntervalMain = setInterval(() => {
-            waitingTime = getWaitingTime();
-            const timerSpan = document.getElementById('waiting-timer-main');
-            if (timerSpan) {
-                timerSpan.textContent = waitingTime;
-            }
-            if (waitingTime <= 0) {
-                clearInterval(waitingIntervalMain);
-            }
-        }, 1000);
-        
+
+        // Create a new timer just for waiting display
+        let waitingTimeRemaining = 0;
+
+        // Get time from server
+        roomRef.get().then((doc) => {
+            if (!doc.exists) return;
+            
+            const data = doc.data();
+            const roundStartTime = data.roundStartTime?.toMillis();
+            const roundDuration = data.timerSeconds || 30;
+            
+            if (!roundStartTime) return;
+            
+            // Calculate initial time
+            const elapsed = (Date.now() - roundStartTime) / 1000;
+            waitingTimeRemaining = Math.max(0, Math.ceil(roundDuration - elapsed));
+            
+            timerDisplay.innerHTML = `Waiting for other players... (<span id="waiting-timer-main">${waitingTimeRemaining}</span>s)`;
+            
+            const waitingIntervalMain = setInterval(() => {
+                waitingTimeRemaining--;
+                if (waitingTimeRemaining < 0) waitingTimeRemaining = 0;
+                
+                const timerSpan = document.getElementById('waiting-timer-main');
+                if (timerSpan) {
+                    timerSpan.textContent = waitingTimeRemaining;
+                }
+                if (waitingTimeRemaining <= 0) {
+                    clearInterval(waitingIntervalMain);
+                }
+            }, 1000);
+        });
+
         // Wait for all players or timeout
         waitForAllSubmissions();
     } else {
@@ -3432,29 +3429,39 @@ mobileSubmitBtn.addEventListener('click', async () => {
         },
         score: totalScore
     });
-    
+
     console.log('Mobile submission saved');
-    
-    // Show waiting with countdown
-    const getMobileWaitingTime = () => {
-        if (mobileRoundTimerInstance && mobileRoundTimerInstance.startTime && mobileRoundTimerInstance.duration) {
-            const elapsed = (Date.now() - mobileRoundTimerInstance.startTime) / 1000;
-            return Math.max(0, Math.ceil(mobileRoundTimerInstance.duration - elapsed));
-        }
-        return 0;
-    };
-    
-    let mobileWaitingTime = getMobileWaitingTime();
-    mobileTimerValue.textContent = `Waiting... ${mobileWaitingTime}s`;
-    
-    const mobileWaitingInterval = setInterval(() => {
-        mobileWaitingTime = getMobileWaitingTime();
-        mobileTimerValue.textContent = `Waiting... ${mobileWaitingTime}s`;
-        if (mobileWaitingTime <= 0) {
-            clearInterval(mobileWaitingInterval);
-        }
-    }, 1000);
-    
+
+    // Show waiting with server-synced countdown
+    let mobileWaitingTimeRemaining = 0;
+
+    roomRef.get().then((doc) => {
+        if (!doc.exists) return;
+        
+        const data = doc.data();
+        const roundStartTime = data.roundStartTime?.toMillis();
+        const roundDuration = data.timerSeconds || 30;
+        
+        if (!roundStartTime) return;
+        
+        // Calculate initial time
+        const elapsed = (Date.now() - roundStartTime) / 1000;
+        mobileWaitingTimeRemaining = Math.max(0, Math.ceil(roundDuration - elapsed));
+        
+        mobileTimerValue.textContent = `Waiting... ${mobileWaitingTimeRemaining}s`;
+        
+        const mobileWaitingInterval = setInterval(() => {
+            mobileWaitingTimeRemaining--;
+            if (mobileWaitingTimeRemaining < 0) mobileWaitingTimeRemaining = 0;
+            
+            mobileTimerValue.textContent = `Waiting... ${mobileWaitingTimeRemaining}s`;
+            
+            if (mobileWaitingTimeRemaining <= 0) {
+                clearInterval(mobileWaitingInterval);
+            }
+        }, 1000);
+    });
+
     // Wait for all players
     waitForAllSubmissions();
 });
