@@ -4199,38 +4199,58 @@ function startHostStaleCheck() {
         }
         
         try {
+            // Get a fresh server timestamp by reading ANY recent server timestamp
             const roomDoc = await roomRef.get();
-            const serverNow = roomDoc.data().hostLastSeen?.toMillis();
             
-            if (!serverNow) return;
+            // Use the room's own metadata timestamp as reference
+            const roomUpdateTime = roomDoc.updateTime?.toMillis() || roomDoc.createTime?.toMillis();
+            
+            if (!roomUpdateTime) {
+                console.log('⚠️ No server time reference yet');
+                return;
+            }
             
             const snapshot = await playersRef.get();
             
-            console.log('🔍 Stale check - Server time:', new Date(serverNow)); // ✅ ADD LOGGING
+            console.log('🔍 Stale check - Reference time:', new Date(roomUpdateTime));
             
             for (const doc of snapshot.docs) {
                 if (doc.id === playerName) continue;
                 
-                const lastSeen = doc.data().lastSeen?.toMillis();
+                const playerData = doc.data();
+                const lastSeen = playerData.lastSeen?.toMillis();
                 
                 if (!lastSeen) {
-                    console.log('⏳', doc.id, 'has no lastSeen yet'); // ✅ ADD LOGGING
+                    console.log('⏳', doc.id, 'has no lastSeen yet');
                     continue;
                 }
                 
-                const staleTime = serverNow - lastSeen;
-                console.log('⏱️', doc.id, 'last seen', staleTime, 'ms ago'); // ✅ ADD LOGGING
+                // Calculate how long ago relative to the document's own update time
+                // This avoids the timestamp drift issue
+                const playerUpdateTime = doc.updateTime?.toMillis();
                 
-                // REDUCE from 6000 to 3000 (3 seconds)
-                if (staleTime > 3000) {
-                    console.log(`🗑️ Removing stale player: ${doc.id} (${staleTime/1000}s stale)`);
+                if (!playerUpdateTime) {
+                    console.log('⚠️', doc.id, 'has no updateTime');
+                    continue;
+                }
+                
+                // Use current local time to estimate staleness
+                // Add a buffer since we update every 1 second
+                const estimatedServerNow = Date.now() + globalClockOffset;
+                const staleTime = estimatedServerNow - lastSeen;
+                
+                console.log('⏱️', doc.id, 'last seen', Math.round(staleTime), 'ms ago');
+                
+                // Remove if stale for more than 5 seconds (buffer for network delay)
+                if (staleTime > 5000) {
+                    console.log(`🗑️ Removing stale player: ${doc.id} (${Math.round(staleTime/1000)}s stale)`);
                     await doc.ref.delete();
                 }
             }
         } catch (error) {
             console.log('Stale check error:', error);
         }
-    }, 1000); // REDUCE to 1000ms (check every 1 second)
+    }, 1000); // Check every 1 second
     
     window.hostStaleCheck = checkInterval;
 }
@@ -4260,21 +4280,19 @@ function startGuestHostMonitor() {
             const hostLastSeen = hostData.lastSeen?.toMillis();
             
             if (!hostLastSeen) {
-                console.log('⏳ Host has no lastSeen yet'); // ✅ ADD LOGGING
+                console.log('⏳ Host has no lastSeen yet');
                 return;
             }
             
-            const roomDoc = await roomRef.get();
-            const serverNow = roomDoc.data().hostLastSeen?.toMillis();
+            // Use local time + clock offset to estimate staleness
+            const estimatedServerNow = Date.now() + globalClockOffset;
+            const staleTime = estimatedServerNow - hostLastSeen;
             
-            if (!serverNow) return;
+            console.log('⏱️ Host last seen', Math.round(staleTime), 'ms ago');
             
-            const staleTime = serverNow - hostLastSeen;
-            console.log('⏱️ Host last seen', staleTime, 'ms ago'); // ✅ ADD LOGGING
-            
-            // REDUCE from 6000 to 3000 (3 seconds)
-            if (staleTime > 3000) {
-                console.log(`🗑️ Host stale for ${staleTime/1000}s`);
+            // Remove host if stale for more than 5 seconds
+            if (staleTime > 5000) {
+                console.log(`🗑️ Host stale for ${Math.round(staleTime/1000)}s`);
                 clearInterval(monitorInterval);
                 alert('Host has disconnected. Returning to lobby.');
                 location.reload();
@@ -4282,7 +4300,7 @@ function startGuestHostMonitor() {
         } catch (error) {
             console.log('Guest host monitor error:', error);
         }
-    }, 1000); // REDUCE to 1000ms
+    }, 1000);
     
     window.guestHostMonitor = monitorInterval;
 }
