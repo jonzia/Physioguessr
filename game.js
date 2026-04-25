@@ -1019,9 +1019,19 @@ function listenForRoundChanges() {
                 submitBtn.style.opacity = '1';
                 submitBtn.style.cursor = 'pointer';
                 
-                // UPDATE SCORE DISPLAY
-                scoreDisplay.textContent = totalScore;
-                console.log('listenForRoundChanges updated score to:', totalScore);
+                // Fetch updated score from server in presenter mode
+                if (isPresenterMode && !isRoomCreator) {
+                    const myPlayerDoc = await playersRef.doc(playerName).get();
+                    if (myPlayerDoc.exists) {
+                        totalScore = myPlayerDoc.data().score || 0;
+                        scoreDisplay.textContent = totalScore;
+                        console.log('Synced score from server on round change:', totalScore);
+                    }
+                } else {
+                    // UPDATE SCORE DISPLAY (normal mode)
+                    scoreDisplay.textContent = totalScore;
+                    console.log('listenForRoundChanges updated score to:', totalScore);
+                }
                 
                 // RESET timer display PROPERLY - clear the innerHTML completely
                 timerDisplay.classList.remove('hidden', 'warning');
@@ -1263,8 +1273,6 @@ async function startMultiplayerGame(roomData) {
     } else {
         // Guest in presenter mode - no timer, just wait
         timerDisplay.classList.add('hidden');
-        timerDisplay.innerHTML = 'Waiting for presenter...';
-        timerDisplay.classList.remove('hidden');
 
         listenForPresenterResults();
     }
@@ -2512,6 +2520,15 @@ function listenForPresenterResults() {
                 return;
             }
             
+            // Update local totalScore from server in presenter mode
+            if (isPresenterMode) {
+                totalScore = myData.score || 0;
+                if (scoreDisplay) {
+                    scoreDisplay.textContent = totalScore;
+                }
+                console.log('Updated totalScore from server:', totalScore);
+            }
+            
             // Check if mobile or desktop
             if (isMobile) {
                 // Show mobile results
@@ -2598,9 +2615,15 @@ submitBtn.addEventListener('click', async () => {
                 score: score,
                 distance: distance,
                 submittedAt: firebase.firestore.FieldValue.serverTimestamp()
-            },
-            score: totalScore
+            }
         });
+        
+        // Only update total score if NOT presenter mode
+        if (!isPresenterMode) {
+            await playersRef.doc(playerName).update({
+                score: totalScore
+            });
+        }
 
         console.log('Submission saved to Firebase');
 
