@@ -268,6 +268,20 @@ button:hover {
     transition: opacity 0.2s ease;
 }
 
+/* Guest submission markers for presenter mode */
+.guest-submission-marker {
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    background: rgba(255, 193, 7, 0.8);
+    border: 2px solid white;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    z-index: 10;
+    box-shadow: 0 0 10px rgba(255, 193, 7, 0.8);
+}
+
 /* Overlay to block interaction */
 .overlay {
     position: fixed;
@@ -744,6 +758,27 @@ button:hover {
     color: #aaa;
 }
 
+.room-settings label input[type="checkbox"] {
+    width: auto;
+    margin-right: 8px;
+    cursor: pointer;
+}
+
+.room-settings label:has(input[type="checkbox"]) {
+    display: flex;
+    align-items: center;
+    margin-top: 15px;
+    padding: 10px;
+    background: #1a1a1a;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 0.3s;
+}
+
+.room-settings label:has(input[type="checkbox"]):hover {
+    background: #252525;
+}
+
 .room-settings input {
     width: 100%;
     padding: 10px;
@@ -752,6 +787,11 @@ button:hover {
     border: 1px solid #555;
     background: #1a1a1a;
     color: #fff;
+}
+
+.room-settings input[type="number"],
+.room-settings select {
+    width: 100%;
 }
 
 .room-code-display {

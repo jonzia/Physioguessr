@@ -56,6 +56,7 @@ let questionSetsData = null;
 let selectedQuestionSet = 'default';
 let playerCountListener = null;
 let monitoringActive = false;
+let isPresenterMode = false;
 
 let roundTimerInstance = null;
 let mobileRoundTimerInstance = null;
@@ -488,6 +489,9 @@ createRoomBtn.addEventListener('click', async () => {
     currentRoomCode = roomCode;
     isRoomCreator = true;
     roomCodeDisplay.textContent = roomCode;
+
+    // Get presenter mode state
+    const presenterMode = presenterModeCheckbox.checked;
     
     // Create room in Firebase
     roomRef = db.collection('rooms').doc(roomCode);
@@ -499,7 +503,8 @@ createRoomBtn.addEventListener('click', async () => {
         status: 'waiting',
         currentRound: 0,
         questionOrder: [],
-        hostLastSeen: firebase.firestore.FieldValue.serverTimestamp()
+        hostLastSeen: firebase.firestore.FieldValue.serverTimestamp(),
+        presenterMode: presenterMode
     });
     
     // Add creator to players
@@ -904,6 +909,13 @@ function listenForRoundChanges() {
             console.log('Forced to advance to round', roomData.currentRound);
             lastSeenRound = roomData.currentRound;
             
+            // ADD - Check if presenter mode (skip for presenter, they control flow)
+            if (isPresenterMode && isRoomCreator) {
+                console.log('Presenter mode - ignoring round change sync');
+                isStartingNewRound = false;
+                return;
+            }
+            
             // CLEAR WAITING INTERVAL FROM PREVIOUS ROUND
             if (waitingInterval) {
                 clearInterval(waitingInterval);
@@ -963,33 +975,40 @@ function listenForRoundChanges() {
                 }
                 mobileTimerValue.textContent = '--';
                 
-                // Wait for roundStartTime - SINGLE CHECK with timeout
-                if (roomData.roundStartTime) {
+                // MODIFY - Check presenter mode
+                if (isPresenterMode) {
+                    // Guest in presenter mode - no timer
                     isStartingNewRound = false;
-                    startMobileTimer(roomData.timerSeconds);
+                    mobileTimerValue.textContent = 'Waiting...';
                 } else {
-                    // Single polling attempt with timeout to prevent multiple timers
-                    let pollCount = 0;
-                    const maxPolls = 50; // 5 seconds max
-                    const waitForMobileTimer = setInterval(async () => {
-                        pollCount++;
-                        
-                        if (pollCount >= maxPolls) {
-                            clearInterval(waitForMobileTimer);
-                            console.error('Timeout waiting for mobile roundStartTime');
-                            isStartingNewRound = false;
-                            return;
-                        }
-                        
-                        const freshDoc = await roomRef.get();
-                        const freshData = freshDoc.data();
-                        
-                        if (freshData.roundStartTime) {
-                            clearInterval(waitForMobileTimer);
-                            isStartingNewRound = false;
-                            startMobileTimer(freshData.timerSeconds);
-                        }
-                    }, 100);
+                    // Normal mode - wait for timer
+                    if (roomData.roundStartTime) {
+                        isStartingNewRound = false;
+                        startMobileTimer(roomData.timerSeconds);
+                    } else {
+                        // Single polling attempt with timeout to prevent multiple timers
+                        let pollCount = 0;
+                        const maxPolls = 50; // 5 seconds max
+                        const waitForMobileTimer = setInterval(async () => {
+                            pollCount++;
+                            
+                            if (pollCount >= maxPolls) {
+                                clearInterval(waitForMobileTimer);
+                                console.error('Timeout waiting for mobile roundStartTime');
+                                isStartingNewRound = false;
+                                return;
+                            }
+                            
+                            const freshDoc = await roomRef.get();
+                            const freshData = freshDoc.data();
+                            
+                            if (freshData.roundStartTime) {
+                                clearInterval(waitForMobileTimer);
+                                isStartingNewRound = false;
+                                startMobileTimer(freshData.timerSeconds);
+                            }
+                        }, 100);
+                    }
                 }
             } else {
                 // Desktop
@@ -1014,33 +1033,43 @@ function listenForRoundChanges() {
                     roundTimerInstance = null;
                 }
                 
-                // Wait for roundStartTime - SINGLE CHECK with timeout
-                if (roomData.roundStartTime) {
+                // MODIFY - Check presenter mode
+                if (isPresenterMode) {
+                    // Guest in presenter mode - no timer, just wait
                     isStartingNewRound = false;
-                    startRoundTimer(roomData.timerSeconds);
+                    timerDisplay.innerHTML = 'Waiting for presenter...';
+                    
+                    // Re-start listening for presenter results
+                    listenForPresenterResults();
                 } else {
-                    // Single polling attempt with timeout to prevent multiple timers
-                    let pollCount = 0;
-                    const maxPolls = 50; // 5 seconds max
-                    const waitForTimer = setInterval(async () => {
-                        pollCount++;
-                        
-                        if (pollCount >= maxPolls) {
-                            clearInterval(waitForTimer);
-                            console.error('Timeout waiting for desktop roundStartTime');
-                            isStartingNewRound = false;
-                            return;
-                        }
-                        
-                        const freshDoc = await roomRef.get();
-                        const freshData = freshDoc.data();
-                        
-                        if (freshData.roundStartTime) {
-                            clearInterval(waitForTimer);
-                            isStartingNewRound = false;
-                            startRoundTimer(freshData.timerSeconds);
-                        }
-                    }, 100);
+                    // Normal mode - wait for timer
+                    if (roomData.roundStartTime) {
+                        isStartingNewRound = false;
+                        startRoundTimer(roomData.timerSeconds);
+                    } else {
+                        // Single polling attempt with timeout to prevent multiple timers
+                        let pollCount = 0;
+                        const maxPolls = 50; // 5 seconds max
+                        const waitForTimer = setInterval(async () => {
+                            pollCount++;
+                            
+                            if (pollCount >= maxPolls) {
+                                clearInterval(waitForTimer);
+                                console.error('Timeout waiting for desktop roundStartTime');
+                                isStartingNewRound = false;
+                                return;
+                            }
+                            
+                            const freshDoc = await roomRef.get();
+                            const freshData = freshDoc.data();
+                            
+                            if (freshData.roundStartTime) {
+                                clearInterval(waitForTimer);
+                                isStartingNewRound = false;
+                                startRoundTimer(freshData.timerSeconds);
+                            }
+                        }, 100);
+                    }
                 }
             }
         }
@@ -1048,6 +1077,9 @@ function listenForRoundChanges() {
         // Check if game is over
         if (roomData.status === 'finished') {
             console.log('Game finished!');
+            
+            // ADD - Stop listening for submissions
+            stopListeningForSubmissions();
             
             // Hide results modal if it's open
             hideResultsModal();
@@ -1070,9 +1102,13 @@ async function startMultiplayerGame(roomData) {
         console.log('Game already started, ignoring duplicate call');
         return;
     }
-    hasGameStarted = true;  // SET IT HERE, RIGHT AFTER THE CHECK
+    hasGameStarted = true;
     
     console.log('startMultiplayerGame called');
+    
+    // ADD - Check if presenter mode
+    isPresenterMode = roomData.presenterMode || false;
+    const isPresenter = isPresenterMode && isRoomCreator;
     
     // STOP HEARTBEAT MONITORING (no longer needed)
     if (window.hostPresenceInterval) {
@@ -1120,12 +1156,12 @@ async function startMultiplayerGame(roomData) {
     startPlayerCensus();
 
     // START PRESENCE UPDATES - FASTER during gameplay (every 3 seconds)
-    stopPresenceUpdates(); // Stop any existing
+    stopPresenceUpdates();
     presenceUpdateInterval = setInterval(() => {
         updatePlayerPresence();
-    }, 3000); // 3 seconds during game
-    updatePlayerPresence(); // Immediate first update
-
+    }, 3000);
+    updatePlayerPresence();
+    
     // Start stale detection ONLY in-game
     if (isRoomCreator) {
         startHostStaleCheck();
@@ -1147,11 +1183,34 @@ async function startMultiplayerGame(roomData) {
     const displayName = playerDoc.exists ? playerDoc.data().name : playerName;
     playerNameDisplay.textContent = displayName;
     
-    // Update end game button text based on role
-    if (isRoomCreator) {
+    // MODIFY - Update button display based on presenter mode
+    if (isPresenter) {
+        // Presenter mode - hide submit, show continue
+        submitBtn.style.display = 'none';
         endGameBtn.textContent = 'End Game';
+        endGameBtn.style.display = 'block';
+        
+        // Create and show Continue button for presenter
+        const continueRoundBtn = document.createElement('button');
+        continueRoundBtn.id = 'continue-round-btn';
+        continueRoundBtn.textContent = 'Continue';
+        continueRoundBtn.style.background = '#2196F3';
+        
+        // Insert Continue button before End Game button
+        const controls = document.querySelector('.controls .button-row');
+        controls.insertBefore(continueRoundBtn, endGameBtn);
+        
+        // Add click handler for Continue
+        continueRoundBtn.addEventListener('click', () => {
+            presenterContinue();
+        });
     } else {
-        endGameBtn.textContent = 'Exit Game';
+        // Normal mode
+        if (isRoomCreator) {
+            endGameBtn.textContent = 'End Game';
+        } else {
+            endGameBtn.textContent = 'Exit Game';
+        }
     }
     
     // Reset game state
@@ -1162,12 +1221,27 @@ async function startMultiplayerGame(roomData) {
     
     console.log('Game starting with questions:', freshRoomData.questionOrder);
     console.log('Timer set to:', freshRoomData.timerSeconds);
+    console.log('Presenter mode:', isPresenterMode, 'Is presenter:', isPresenter);
     
     // Load first question
     loadNewQuestion();
     
-    // Start timer for first round with FRESH data
-    startRoundTimer(freshRoomData.timerSeconds);
+    // MODIFY - Only start timer if NOT presenter mode
+    if (!isPresenterMode) {
+        // Normal timed mode
+        startRoundTimer(freshRoomData.timerSeconds);
+    } else if (isPresenter) {
+        // Presenter mode - hide timer, start listening for submissions
+        timerDisplay.classList.add('hidden');
+        startListeningForSubmissions();
+    } else {
+        // Guest in presenter mode - no timer, just wait
+        timerDisplay.classList.add('hidden');
+        timerDisplay.innerHTML = 'Waiting for presenter...';
+        timerDisplay.classList.remove('hidden');
+
+        listenForPresenterResults();
+    }
     
     // Listen for round changes (forced sync)
     listenForRoundChanges();
@@ -1176,6 +1250,198 @@ async function startMultiplayerGame(roomData) {
 // ============================================
 // END MULTIPLAYER / LOBBY SYSTEM
 // ============================================
+
+// ============================================
+// PRESENTER MODE FUNCTIONS
+// ============================================
+
+// Presenter clicks Continue - advance to results
+async function presenterContinue() {
+    console.log('Presenter clicked Continue');
+    
+    // Get all player submissions for this round
+    const playersSnapshot = await playersRef.get();
+    const players = playersSnapshot.docs;
+    
+    // Check if all guests have submitted (presenter doesn't submit)
+    const guestCount = players.filter(doc => !doc.data().isCreator).length;
+    const submittedCount = players.filter(doc => {
+        const data = doc.data();
+        return !data.isCreator && data[`round${currentRound}`] !== undefined;
+    }).length;
+    
+    if (submittedCount < guestCount) {
+        const remaining = guestCount - submittedCount;
+        if (!confirm(`${remaining} player(s) haven't submitted yet. Continue anyway?`)) {
+            return;
+        }
+    }
+    
+    // Show results for everyone
+    await roomRef.update({
+        resultsStartTime: firebase.firestore.FieldValue.serverTimestamp(),
+        showingResults: true
+    });
+    
+    // Get question data
+    const roomDoc = await roomRef.get();
+    const roomData = roomDoc.data();
+    const questionId = roomData.questionOrder[currentRound - 1];
+    const setId = roomData.questionSetId || 'default';
+    const questions = getQuestionsFromSet(setId);
+    const question = questions.find(q => q.id === questionId);
+    
+    // Get all players' data
+    const allPlayersData = players.map(doc => ({
+        id: doc.id,
+        name: doc.data().name,
+        ...doc.data()
+    }));
+    
+    // Show results modal for presenter (no score/distance)
+    showPresenterResults(question, allPlayersData);
+}
+
+// Listen for guest submissions and show markers in real-time
+let submissionPolling = null;
+
+function startListeningForSubmissions() {
+    if (submissionPolling) {
+        clearInterval(submissionPolling);
+    }
+    
+    // Poll every 2 seconds for new submissions
+    submissionPolling = setInterval(async () => {
+        const playersSnapshot = await playersRef.get();
+        const players = playersSnapshot.docs;
+        
+        // Clear existing guest markers
+        const existingMarkers = brainViewer.querySelectorAll('.guest-submission-marker');
+        existingMarkers.forEach(marker => marker.remove());
+        
+        // Add markers for each submitted guest
+        players.forEach(doc => {
+            const data = doc.data();
+            
+            // Skip presenter (host)
+            if (data.isCreator) return;
+            
+            const roundData = data[`round${currentRound}`];
+            if (!roundData) return; // Haven't submitted yet
+            
+            // Only show marker if on the same slice
+            if (roundData.slice !== currentSlice) return;
+            
+            // Create marker
+            const marker = document.createElement('div');
+            marker.className = 'guest-submission-marker';
+            
+            // Position marker
+            const rect = brainImg.getBoundingClientRect();
+            const viewerRect = brainViewer.getBoundingClientRect();
+            const x = rect.left - viewerRect.left + (roundData.x * rect.width);
+            const y = rect.top - viewerRect.top + (roundData.y * rect.height);
+            
+            marker.style.left = x + 'px';
+            marker.style.top = y + 'px';
+            
+            brainViewer.appendChild(marker);
+        });
+    }, 2000); // Poll every 2 seconds
+}
+
+// Stop listening for submissions
+function stopListeningForSubmissions() {
+    if (submissionPolling) {
+        clearInterval(submissionPolling);
+        submissionPolling = null;
+    }
+}
+
+// Show results modal for presenter (no score/distance boxes)
+function showPresenterResults(question, allPlayersData) {
+    resultsRound.textContent = currentRound;
+    
+    // Hide score and distance sections (presenter didn't play)
+    const resultScore = document.querySelector('.result-score');
+    const resultDistance = document.querySelector('.result-distance');
+    if (resultScore) resultScore.style.display = 'none';
+    if (resultDistance) resultDistance.style.display = 'none';
+    
+    // Show description
+    resultDescription.textContent = question.description;
+    
+    // Update leaderboard
+    if (allPlayersData) {
+        updateLeaderboard(allPlayersData);
+    }
+    
+    // Show Continue button for presenter
+    continueBtn.classList.remove('hidden');
+    continueBtn.disabled = false;
+    continueBtn.textContent = 'Continue';
+    waitingMessage.classList.add('hidden');
+    endGameResultsBtn.classList.remove('hidden');
+    
+    // Set the result image
+    const sliceStr = String(question.slice).padStart(3, '0');
+    resultsSlice.src = `images/slice_${sliceStr}.png`;
+    
+    resultsSlice.onload = () => {
+        positionPresenterResultMarkers(question, allPlayersData);
+    };
+    
+    resultsOverlay.classList.remove('hidden');
+    resultsModal.classList.remove('hidden');
+}
+
+// Position markers on presenter results (correct + all guests)
+function positionPresenterResultMarkers(question, allPlayersData) {
+    const img = resultsSlice;
+    const container = img.parentElement;
+    
+    const imgRect = img.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+    
+    const imgOffsetX = imgRect.left - containerRect.left;
+    const imgOffsetY = imgRect.top - containerRect.top;
+    
+    // Position correct marker (green)
+    const correctX = imgOffsetX + (question.x * imgRect.width);
+    const correctY = imgOffsetY + (question.y * imgRect.height);
+    correctMarker.style.left = correctX + 'px';
+    correctMarker.style.top = correctY + 'px';
+    
+    // Hide player marker (presenter didn't submit)
+    playerMarker.style.opacity = '0';
+    
+    // Clear previous markers
+    otherPlayersMarkers.innerHTML = '';
+    
+    // Add all guest markers
+    allPlayersData.forEach(player => {
+        // Skip presenter
+        if (player.isCreator) return;
+        
+        const roundData = player[`round${currentRound}`];
+        if (!roundData) return;
+        
+        const guestMarker = document.createElement('div');
+        guestMarker.className = 'result-marker opponent-marker';
+        
+        const guestX = imgOffsetX + (roundData.x * imgRect.width);
+        const guestY = imgOffsetY + (roundData.y * imgRect.height);
+        guestMarker.style.left = guestX + 'px';
+        guestMarker.style.top = guestY + 'px';
+        
+        // Fade if on wrong slice
+        if (roundData.slice !== question.slice) {
+            guestMarker.classList.add('faded');
+        }
+        
+        otherPlayersMarkers.appendChild(guestMarker);
+    });
+}
 
 // Configuration
 const totalSlices = 26;
@@ -1397,8 +1663,57 @@ function waitForNextRound() {
     });
 }
 
+// Presenter advances to next round from results modal
+async function presenterAdvanceRound() {
+    console.log('Presenter advancing round');
+    
+    // Hide results modal
+    hideResultsModal();
+    
+    // Clear showingResults flag
+    await roomRef.update({
+        showingResults: false
+    });
+    
+    // Check if game is over
+    if (currentRound >= totalRounds) {
+        // End game
+        await roomRef.update({ status: 'finished' });
+        return;
+    }
+    
+    // Advance to next round
+    currentRound++;
+    currentRoundDisplay.textContent = currentRound;
+    
+    // Reset submission state
+    hasSubmittedThisRound = false;
+    
+    // Load next question
+    loadNewQuestion();
+    
+    // Clear markers and restart listening
+    const existingMarkers = brainViewer.querySelectorAll('.guest-submission-marker');
+    existingMarkers.forEach(marker => marker.remove());
+    startListeningForSubmissions();
+    
+    // Update round in Firebase (triggers listenForRoundChanges for guests)
+    await roomRef.update({
+        currentRound: currentRound
+    });
+    
+    console.log('Advanced to round', currentRound);
+}
+
 // Continue button
 continueBtn.addEventListener('click', async () => {
+    // ADD - Check if presenter mode
+    if (isPresenterMode && isRoomCreator) {
+        // Presenter clicked continue from results
+        await presenterAdvanceRound();
+        return;
+    }
+    
     // MULTIPLAYER: Mark as ready and show waiting state
     if (currentRoomCode) {
         await playersRef.doc(playerName).update({
@@ -1772,6 +2087,12 @@ function hideResultsModal() {
     resultsOverlay.classList.add('hidden');
     resultsModal.classList.add('hidden');
     
+    // ADD - Restore score/distance boxes (in case they were hidden for presenter)
+    const resultScore = document.querySelector('.result-score');
+    const resultDistance = document.querySelector('.result-distance');
+    if (resultScore) resultScore.style.display = 'block';
+    if (resultDistance) resultDistance.style.display = 'block';
+    
     // Stop results timer
     if (resultsTimerInstance) {
         resultsTimerInstance.stop();
@@ -1929,6 +2250,12 @@ function cleanupAndReturnToLobby() {
 }
 
 function waitForAllSubmissions() {
+    // ADD - Don't use this function in presenter mode
+    if (isPresenterMode) {
+        console.log('Presenter mode - skipping waitForAllSubmissions');
+        return;
+    }
+    
     // Remove any existing listener
     if (submissionListener) {
         submissionListener();
@@ -1967,8 +2294,8 @@ function waitForAllSubmissions() {
             
             // Get all players' data
             const allPlayersData = players.map(doc => ({
-                id: doc.id,  // ADD THIS
-                name: doc.data().name,  // CHANGE from doc.id
+                id: doc.id,
+                name: doc.data().name,
                 ...doc.data()
             }));
             
@@ -1992,6 +2319,51 @@ function waitForAllSubmissions() {
             
             // Start the 15-second auto-advance timer
             waitForNextRound();
+        }
+    });
+}
+
+// Listen for presenter to trigger results (guests only)
+function listenForPresenterResults() {
+    if (!isPresenterMode || isRoomCreator) return;
+    
+    const resultsListener = roomRef.onSnapshot(async (doc) => {
+        if (!doc.exists) return;
+        
+        const roomData = doc.data();
+        
+        // Check if presenter triggered results
+        if (roomData.showingResults && roomData.resultsStartTime) {
+            console.log('Presenter triggered results');
+            
+            // Get question data
+            const questionId = roomData.questionOrder[currentRound - 1];
+            const setId = roomData.questionSetId || 'default';
+            const questions = getQuestionsFromSet(setId);
+            const question = questions.find(q => q.id === questionId);
+            
+            // Get all players' data
+            const playersSnapshot = await playersRef.get();
+            const allPlayersData = playersSnapshot.docs.map(doc => ({
+                id: doc.id,
+                name: doc.data().name,
+                ...doc.data()
+            }));
+            
+            // Get my data
+            const myData = allPlayersData.find(p => p.id === playerName);
+            const myRoundData = myData[`round${currentRound}`];
+            
+            // Show results for guest (with score/distance)
+            showResultsModal(myRoundData.score, myRoundData.distance, allPlayersData);
+            
+            // Hide continue button for guests
+            continueBtn.classList.add('hidden');
+            waitingMessage.classList.remove('hidden');
+            waitingMessage.innerHTML = 'Waiting for presenter to continue...';
+            
+            // Unsubscribe
+            resultsListener();
         }
     });
 }
@@ -2055,57 +2427,66 @@ submitBtn.addEventListener('click', async () => {
 
         console.log('Submission saved to Firebase');
 
-        // FIX 2: STOP the round timer completely
+        // Stop the round timer completely
         if (roundTimerInstance) {
             roundTimerInstance.stop();
             roundTimerInstance = null;
         }
 
-        // FIX 2: Disable and gray out submit button
+        // Disable and gray out submit button
         submitBtn.disabled = true;
         submitBtn.style.opacity = '0.5';
         submitBtn.style.cursor = 'not-allowed';
 
-        // FIX 2: Change timer display to show waiting message with countdown
-        timerDisplay.classList.remove('hidden', 'warning');
+        // Different behavior for presenter mode
+        if (isPresenterMode) {
+            // Presenter mode - just show waiting message (no timer)
+            timerDisplay.classList.remove('hidden', 'warning');
+            timerDisplay.innerHTML = 'Waiting for presenter...';
+            
+            // Don't call waitForAllSubmissions - presenter controls flow
+        } else {
+            // Normal mode - show countdown timer
+            timerDisplay.classList.remove('hidden', 'warning');
 
-        // CLEAR any existing waiting interval first
-        if (waitingInterval) {
-            clearInterval(waitingInterval);
-            waitingInterval = null;
-        }
+            // Clear any existing waiting interval first
+            if (waitingInterval) {
+                clearInterval(waitingInterval);
+                waitingInterval = null;
+            }
 
-        // Get remaining time and show countdown
-        roomRef.get().then((doc) => {
-            if (!doc.exists) return;
-            
-            const data = doc.data();
-            const roundStartTime = data.roundStartTime?.toMillis();
-            const roundDuration = data.timerSeconds || 30;
-            
-            if (!roundStartTime) return;
-            
-            const updateWaitingTimer = () => {
-                const now = Date.now() + globalClockOffset; // ✅ USE GLOBAL OFFSET
-                const elapsed = (now - roundStartTime) / 1000;
-                const remaining = Math.max(0, Math.ceil(roundDuration - elapsed));
+            // Get remaining time and show countdown
+            roomRef.get().then((doc) => {
+                if (!doc.exists) return;
                 
-                timerDisplay.innerHTML = `Waiting for other players... (<span id="timer-value">${remaining}</span>s)`;
+                const data = doc.data();
+                const roundStartTime = data.roundStartTime?.toMillis();
+                const roundDuration = data.timerSeconds || 30;
                 
-                if (remaining <= 0) {
-                    if (waitingInterval) {
-                        clearInterval(waitingInterval);
-                        waitingInterval = null;
+                if (!roundStartTime) return;
+                
+                const updateWaitingTimer = () => {
+                    const now = Date.now() + globalClockOffset;
+                    const elapsed = (now - roundStartTime) / 1000;
+                    const remaining = Math.max(0, Math.ceil(roundDuration - elapsed));
+                    
+                    timerDisplay.innerHTML = `Waiting for other players... (<span id="timer-value">${remaining}</span>s)`;
+                    
+                    if (remaining <= 0) {
+                        if (waitingInterval) {
+                            clearInterval(waitingInterval);
+                            waitingInterval = null;
+                        }
                     }
-                }
-            };
-            
-            updateWaitingTimer();
-            waitingInterval = setInterval(updateWaitingTimer, 1000);
-        });
+                };
+                
+                updateWaitingTimer();
+                waitingInterval = setInterval(updateWaitingTimer, 1000);
+            });
 
-        // Wait for all players or timeout
-        waitForAllSubmissions();
+            // Wait for all players or timeout
+            waitForAllSubmissions();
+        }
     } else {
         // SINGLE-PLAYER: Show results immediately
         showResultsModal(score, distance);
@@ -2991,6 +3372,7 @@ const matchmakingPanel = document.getElementById('matchmaking-panel');
 const cancelMatchmakingBtn = document.getElementById('cancel-matchmaking-btn');
 const queueCount = document.getElementById('queue-count');
 const closeRoomBtn = document.getElementById('close-room-btn');
+const presenterModeCheckbox = document.getElementById('presenter-mode-checkbox');
 
 let matchmakingListener = null;
 let queueCountListener = null;
