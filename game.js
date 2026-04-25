@@ -1187,12 +1187,25 @@ async function startMultiplayerGame(roomData) {
     const displayName = playerDoc.exists ? playerDoc.data().name : playerName;
     playerNameDisplay.textContent = displayName;
     
-    // MODIFY - Update button display based on presenter mode
+    // Update button display based on presenter mode
     if (isPresenter) {
         // Presenter mode - hide submit, show continue
         submitBtn.style.display = 'none';
         endGameBtn.textContent = 'End Game';
         endGameBtn.style.display = 'block';
+        
+        // Show room info
+        const presenterRoomInfo = document.getElementById('presenter-room-info');
+        const gameRoomCode = document.getElementById('game-room-code');
+        const gamePlayersCount = document.getElementById('game-players-count');
+        
+        if (presenterRoomInfo && gameRoomCode) {
+            presenterRoomInfo.classList.remove('hidden');
+            gameRoomCode.textContent = currentRoomCode;
+        }
+        
+        // Start monitoring player count
+        startPresenterPlayerCountMonitor();
         
         // Create and show Continue button for presenter
         const continueRoundBtn = document.createElement('button');
@@ -1267,20 +1280,6 @@ async function presenterContinue() {
     const playersSnapshot = await playersRef.get();
     const players = playersSnapshot.docs;
     
-    // Check if all guests have submitted (presenter doesn't submit)
-    const guestCount = players.filter(doc => !doc.data().isCreator).length;
-    const submittedCount = players.filter(doc => {
-        const data = doc.data();
-        return !data.isCreator && data[`round${currentRound}`] !== undefined;
-    }).length;
-    
-    if (submittedCount < guestCount) {
-        const remaining = guestCount - submittedCount;
-        if (!confirm(`${remaining} player(s) haven't submitted yet. Continue anyway?`)) {
-            return;
-        }
-    }
-    
     // Show results for everyone
     await roomRef.update({
         resultsStartTime: firebase.firestore.FieldValue.serverTimestamp(),
@@ -1333,12 +1332,17 @@ function startListeningForSubmissions() {
             const roundData = data[`round${currentRound}`];
             if (!roundData) return; // Haven't submitted yet
             
-            // Only show marker if on the same slice
-            if (roundData.slice !== currentSlice) return;
+            // REMOVED - Don't skip if on different slice, show all markers
+            // if (roundData.slice !== currentSlice) return;
             
             // Create marker
             const marker = document.createElement('div');
             marker.className = 'guest-submission-marker';
+            
+            // Make transparent if on different slice
+            if (roundData.slice !== currentSlice) {
+                marker.style.opacity = '0.3';
+            }
             
             // Position marker
             const rect = brainImg.getBoundingClientRect();
@@ -1445,6 +1449,29 @@ function positionPresenterResultMarkers(question, allPlayersData) {
         
         otherPlayersMarkers.appendChild(guestMarker);
     });
+}
+
+// Monitor player count for presenter mode
+let presenterPlayerCountListener = null;
+
+function startPresenterPlayerCountMonitor() {
+    if (!isPresenterMode || !isRoomCreator || !playersRef) return;
+    
+    presenterPlayerCountListener = playersRef.onSnapshot((snapshot) => {
+        const gamePlayersCount = document.getElementById('game-players-count');
+        if (gamePlayersCount) {
+            // Count only guests (exclude presenter)
+            const guestCount = snapshot.docs.filter(doc => !doc.data().isCreator).length;
+            gamePlayersCount.textContent = guestCount;
+        }
+    });
+}
+
+function stopPresenterPlayerCountMonitor() {
+    if (presenterPlayerCountListener) {
+        presenterPlayerCountListener();
+        presenterPlayerCountListener = null;
+    }
 }
 
 // Configuration
@@ -1845,6 +1872,35 @@ function loadNewQuestion() {
     }
 }
 
+// Update presenter marker opacity based on current slice
+async function updatePresenterMarkers() {
+    if (!playersRef) return;
+    
+    const playersSnapshot = await playersRef.get();
+    const players = playersSnapshot.docs;
+    
+    // Update opacity for existing markers
+    const existingMarkers = brainViewer.querySelectorAll('.guest-submission-marker');
+    let markerIndex = 0;
+    
+    players.forEach(doc => {
+        const data = doc.data();
+        
+        if (data.isCreator) return;
+        
+        const roundData = data[`round${currentRound}`];
+        if (!roundData) return;
+        
+        const marker = existingMarkers[markerIndex];
+        if (marker) {
+            // Update opacity based on slice match
+            marker.style.opacity = roundData.slice === currentSlice ? '1' : '0.3';
+        }
+        
+        markerIndex++;
+    });
+}
+
 // Scroll through slices
 brainViewer.addEventListener('wheel', (e) => {
     e.preventDefault();
@@ -1857,6 +1913,11 @@ brainViewer.addEventListener('wheel', (e) => {
     
     updateSlice();
     updateMarkerOpacity();
+    
+    // Update presenter markers on slice change
+    if (isPresenterMode && isRoomCreator) {
+        updatePresenterMarkers();
+    }
 });
 
 // Slider to change slices
@@ -1864,6 +1925,11 @@ sliceSlider.addEventListener('input', (e) => {
     currentSlice = parseInt(e.target.value);
     updateSlice();
     updateMarkerOpacity();
+    
+    // Update presenter markers on slice change
+    if (isPresenterMode && isRoomCreator) {
+        updatePresenterMarkers();
+    }
 });
 
 // Click to mark location
@@ -1922,8 +1988,14 @@ function resetView() {
 function updateLeaderboard(allPlayersData) {
     if (!allPlayersData) return;
     
+    // ✅ ADD - Filter out presenter (host) in presenter mode
+    let playersToShow = allPlayersData;
+    if (isPresenterMode) {
+        playersToShow = allPlayersData.filter(player => !player.isCreator);
+    }
+    
     // Sort players by total score (descending)
-    const sortedPlayers = allPlayersData.sort((a, b) => b.score - a.score);
+    const sortedPlayers = playersToShow.sort((a, b) => b.score - a.score);
     
     leaderboardList.innerHTML = '';
     
@@ -2122,8 +2194,8 @@ async function showGameOver() {
         if (currentRoomCode && playersRef) {
             const playersSnapshot = await playersRef.get();
             const allPlayersData = playersSnapshot.docs.map(doc => ({
-                id: doc.id,  // ADD THIS - internal identifier
-                name: doc.data().name,  // CHANGE from doc.id - display name
+                id: doc.id,
+                name: doc.data().name,
                 ...doc.data()
             }));
             
@@ -2173,7 +2245,28 @@ async function showGameOver() {
         
     } else {
         // Desktop game over
-        finalScoreDisplay.textContent = totalScore;
+        
+        // Different display for presenter mode
+        if (isPresenterMode && isRoomCreator) {
+            // Presenter mode - hide score, just show "Return to Lobby"
+            const gameOverH2 = gameOverDiv.querySelector('h2');
+            if (gameOverH2) {
+                gameOverH2.textContent = 'Game Complete!';
+            }
+            
+            // Hide final score display
+            const finalScoreP = gameOverDiv.querySelector('.final-score');
+            if (finalScoreP) {
+                finalScoreP.style.display = 'none';
+            }
+            
+            // Change button text
+            newGameBtn.textContent = 'Return to Lobby';
+        } else {
+            // Normal mode - show score
+            finalScoreDisplay.textContent = totalScore;
+        }
+        
         gameOverOverlay.classList.remove('hidden');
         gameOverDiv.classList.remove('hidden');
     }
@@ -2199,6 +2292,10 @@ async function showGameOver() {
         gameStartListener();
         gameStartListener = null;
     }
+    
+    // Stop presenter-specific listeners
+    stopListeningForSubmissions();
+    stopPresenterPlayerCountMonitor();
     
     // Stop timers
     if (roundTimerInstance) {

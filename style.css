@@ -282,6 +282,27 @@ button:hover {
     box-shadow: 0 0 10px rgba(255, 193, 7, 0.8);
 }
 
+.presenter-room-info {
+    display: flex;
+    gap: 15px;
+    align-items: center;
+}
+
+.room-code-badge,
+.players-count-badge {
+    background: #2a2a2a;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: bold;
+}
+
+.room-code-badge span,
+.players-count-badge span {
+    color: #4CAF50;
+    margin-left: 5px;
+}
+
 /* Overlay to block interaction */
 .overlay {
     position: fixed;
