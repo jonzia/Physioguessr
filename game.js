@@ -64,6 +64,8 @@ let waitingInterval = null;
 let mobileWaitingInterval = null;
 let gameStartListener = null;
 
+let globalClockOffset = 0;
+
 // ============================================
 // SERVER-SYNCHRONIZED TIMER SYSTEM
 // ============================================
@@ -78,7 +80,7 @@ class ServerTimer {
         this.startTime = null;
         this.duration = null;
         this.isActive = false;
-        this.clockOffset = 0; // ADD THIS
+        this.clockOffset = 0;
     }
     
     start(duration) {
@@ -89,7 +91,6 @@ class ServerTimer {
         
         this.isActive = true;
         
-        // Listen to room for server timestamp
         this.unsubscribe = this.roomRef.onSnapshot((doc) => {
             if (!doc.exists || !this.isActive) {
                 this.stop();
@@ -101,16 +102,14 @@ class ServerTimer {
             
             if (!serverStartTime) return;
             
-            // CALCULATE CLOCK OFFSET ONCE
             if (this.clockOffset === 0 && data.roundStartTime) {
-                // Estimate server time vs local time
                 const serverNow = data.roundStartTime.toMillis();
                 const localNow = Date.now();
                 this.clockOffset = serverNow - localNow;
+                globalClockOffset = this.clockOffset; // ✅ STORE GLOBALLY
                 console.log('Clock offset detected:', this.clockOffset, 'ms');
             }
             
-            // Only start interval once we have server time AND we haven't started yet
             if (!this.interval && serverStartTime && this.isActive) {
                 this.startTime = serverStartTime;
                 this.duration = data.timerSeconds || duration;
@@ -124,7 +123,6 @@ class ServerTimer {
                         return;
                     }
                     
-                    // USE CORRECTED TIME
                     const now = Date.now() + this.clockOffset;
                     const elapsed = (now - this.startTime) / 1000;
                     const remaining = Math.max(0, Math.ceil(this.duration - elapsed));
@@ -137,10 +135,9 @@ class ServerTimer {
                     }
                 };
                 
-                updateTimer(); // Immediate update
+                updateTimer();
                 this.interval = setInterval(updateTimer, 100);
                 
-                // Unsubscribe from snapshot NOW that we have what we need
                 if (this.unsubscribe) {
                     this.unsubscribe();
                     this.unsubscribe = null;
@@ -162,7 +159,8 @@ class ServerTimer {
             this.unsubscribe = null;
         }
         
-        this.clockOffset = 0; // RESET FOR NEXT USE
+        // DON'T reset globalClockOffset here - keep it for waiting timer
+        this.clockOffset = 0;
     }
 }
 
@@ -2084,11 +2082,10 @@ submitBtn.addEventListener('click', async () => {
             if (!roundStartTime) return;
             
             const updateWaitingTimer = () => {
-                const now = Date.now();
+                const now = Date.now() + globalClockOffset; // ✅ USE GLOBAL OFFSET
                 const elapsed = (now - roundStartTime) / 1000;
                 const remaining = Math.max(0, Math.ceil(roundDuration - elapsed));
                 
-                // Show "Waiting for other players... (Xs)" format
                 timerDisplay.innerHTML = `Waiting for other players... (<span id="timer-value">${remaining}</span>s)`;
                 
                 if (remaining <= 0) {
@@ -3768,11 +3765,10 @@ mobileSubmitBtn.addEventListener('click', async () => {
         if (!roundStartTime) return;
         
         const updateMobileWaitingTimer = () => {
-            const now = Date.now();
+            const now = Date.now() + globalClockOffset; // ✅ USE GLOBAL OFFSET
             const elapsed = (now - roundStartTime) / 1000;
             const remaining = Math.max(0, Math.ceil(roundDuration - elapsed));
             
-            // Just show the number (no "Waiting..." text on mobile)
             mobileTimerValue.textContent = `${remaining}`;
             
             if (remaining <= 0) {
@@ -4192,7 +4188,7 @@ function startPlayerCensus() {
     });
 }
 
-// Host checks for stale players (MORE AGGRESSIVE)
+// Host checks for stale players
 function startHostStaleCheck() {
     if (!isRoomCreator || !playersRef) return;
     
@@ -4210,23 +4206,31 @@ function startHostStaleCheck() {
             
             const snapshot = await playersRef.get();
             
+            console.log('🔍 Stale check - Server time:', new Date(serverNow)); // ✅ ADD LOGGING
+            
             for (const doc of snapshot.docs) {
                 if (doc.id === playerName) continue;
                 
                 const lastSeen = doc.data().lastSeen?.toMillis();
                 
-                if (!lastSeen) continue;
+                if (!lastSeen) {
+                    console.log('⏳', doc.id, 'has no lastSeen yet'); // ✅ ADD LOGGING
+                    continue;
+                }
                 
-                // REDUCE from 6000 to 4000 (4 seconds)
-                if (serverNow - lastSeen > 4000) {
-                    console.log(`Removing stale player: ${doc.id} (${(serverNow - lastSeen)/1000}s stale)`);
+                const staleTime = serverNow - lastSeen;
+                console.log('⏱️', doc.id, 'last seen', staleTime, 'ms ago'); // ✅ ADD LOGGING
+                
+                // REDUCE from 6000 to 3000 (3 seconds)
+                if (staleTime > 3000) {
+                    console.log(`🗑️ Removing stale player: ${doc.id} (${staleTime/1000}s stale)`);
                     await doc.ref.delete();
                 }
             }
         } catch (error) {
             console.log('Stale check error:', error);
         }
-    }, 1500); // REDUCE from 2000 to 1500ms (check every 1.5s)
+    }, 1000); // REDUCE to 1000ms (check every 1 second)
     
     window.hostStaleCheck = checkInterval;
 }
@@ -4255,16 +4259,22 @@ function startGuestHostMonitor() {
             const hostData = hostDoc.data();
             const hostLastSeen = hostData.lastSeen?.toMillis();
             
-            if (!hostLastSeen) return;
+            if (!hostLastSeen) {
+                console.log('⏳ Host has no lastSeen yet'); // ✅ ADD LOGGING
+                return;
+            }
             
             const roomDoc = await roomRef.get();
             const serverNow = roomDoc.data().hostLastSeen?.toMillis();
             
             if (!serverNow) return;
             
-            // REDUCE from 6000 to 4000 (4 seconds)
-            if (serverNow - hostLastSeen > 4000) {
-                console.log(`Host stale for ${(serverNow - hostLastSeen)/1000}s`);
+            const staleTime = serverNow - hostLastSeen;
+            console.log('⏱️ Host last seen', staleTime, 'ms ago'); // ✅ ADD LOGGING
+            
+            // REDUCE from 6000 to 3000 (3 seconds)
+            if (staleTime > 3000) {
+                console.log(`🗑️ Host stale for ${staleTime/1000}s`);
                 clearInterval(monitorInterval);
                 alert('Host has disconnected. Returning to lobby.');
                 location.reload();
@@ -4272,7 +4282,7 @@ function startGuestHostMonitor() {
         } catch (error) {
             console.log('Guest host monitor error:', error);
         }
-    }, 1500); // REDUCE from 2000 to 1500ms
+    }, 1000); // REDUCE to 1000ms
     
     window.guestHostMonitor = monitorInterval;
 }
@@ -4295,8 +4305,9 @@ async function updatePlayerPresence() {
         await playersRef.doc(playerName).update({
             lastSeen: firebase.firestore.FieldValue.serverTimestamp()
         });
+        console.log('✓ Presence updated for', playerName); // ✅ ADD LOGGING
     } catch (error) {
-        console.log('Presence update failed:', error);
+        console.log('❌ Presence update failed:', error);
     }
 }
 
