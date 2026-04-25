@@ -492,6 +492,7 @@ createRoomBtn.addEventListener('click', async () => {
 
     // Get presenter mode state
     const presenterMode = presenterModeCheckbox.checked;
+    console.log('Presenter mode checkbox checked:', presenterMode);
     
     // Create room in Firebase
     roomRef = db.collection('rooms').doc(roomCode);
@@ -506,6 +507,8 @@ createRoomBtn.addEventListener('click', async () => {
         hostLastSeen: firebase.firestore.FieldValue.serverTimestamp(),
         presenterMode: presenterMode
     });
+
+    console.log('Room created with presenterMode:', presenterMode);
     
     // Add creator to players
     playersRef = roomRef.collection('players');
@@ -753,6 +756,7 @@ startGameBtn.addEventListener('click', async () => {
     // Get fresh room data
     const freshRoomDoc = await roomRef.get();
     const freshRoomData = freshRoomDoc.data();
+    console.log('Fresh room data before starting:', freshRoomData);
     
     // Start the game immediately for host (RESTORED)
     startMultiplayerGame(freshRoomData);
@@ -1097,6 +1101,8 @@ function listenForRoundChanges() {
 }
 
 async function startMultiplayerGame(roomData) {
+    console.log('startMultiplayerGame called with roomData:', roomData);
+
     // Prevent double-starting
     if (hasGameStarted) {
         console.log('Game already started, ignoring duplicate call');
@@ -1109,6 +1115,7 @@ async function startMultiplayerGame(roomData) {
     // ADD - Check if presenter mode
     isPresenterMode = roomData.presenterMode || false;
     const isPresenter = isPresenterMode && isRoomCreator;
+    console.log('Presenter mode:', isPresenterMode, 'Is presenter:', isPresenter);
     
     // STOP HEARTBEAT MONITORING (no longer needed)
     if (window.hostPresenceInterval) {
