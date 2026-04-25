@@ -851,6 +851,8 @@ function listenForRoundChanges() {
             if (isMobile) {
                 mobileRound.textContent = currentRound;
                 mobileSubmitBtn.disabled = false;
+                mobileSubmitBtn.style.opacity = '1';  // ADD THIS - reset opacity
+                mobileSubmitBtn.style.cursor = 'pointer';  // ADD THIS - reset cursor
                 mobileClickPosition = null;
                 mobileCurrentSlice = 13;
                 mobileSliceSlider.value = 13;
@@ -858,6 +860,12 @@ function listenForRoundChanges() {
                 mobileMarker.classList.remove('show');
                 
                 loadNewQuestion();
+                
+                // STOP any existing timer first
+                if (mobileRoundTimerInstance) {
+                    mobileRoundTimerInstance.stop();
+                    mobileRoundTimerInstance = null;
+                }
                 
                 // WAIT for roundStartTime to be set before starting timer
                 const waitForMobileTimer = setInterval(async () => {
@@ -875,12 +883,20 @@ function listenForRoundChanges() {
             } else {
                 currentRoundDisplay.textContent = currentRound;
                 submitBtn.disabled = false;
+                submitBtn.style.opacity = '1';  // ADD THIS - reset opacity
+                submitBtn.style.cursor = 'pointer';  // ADD THIS - reset cursor
                 
                 // UPDATE SCORE DISPLAY HERE
                 scoreDisplay.textContent = totalScore;
                 console.log('listenForRoundChanges updated score to:', totalScore);
                 
                 loadNewQuestion();
+                
+                // STOP any existing timer first
+                if (roundTimerInstance) {
+                    roundTimerInstance.stop();
+                    roundTimerInstance = null;
+                }
                 
                 // WAIT for roundStartTime to be set before starting timer
                 const waitForTimer = setInterval(async () => {
