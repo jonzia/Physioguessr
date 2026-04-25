@@ -4305,44 +4305,6 @@ function startPresenceUpdates() {
     }, 2000);
 }
 
-// Stop player census
-function stopPlayerCensus() {
-    if (playerCensusListener) {
-        playerCensusListener();
-        playerCensusListener = null;
-    }
-    lastKnownPlayerCount = 0;
-    lastKnownPlayers = new Set();
-}
-
-// Update player's last seen timestamp (lightweight presence)
-async function updatePlayerPresence() {
-    if (!currentRoomCode || !playerName || !playersRef) return;
-    
-    try {
-        await playersRef.doc(playerName).update({
-            lastSeen: firebase.firestore.FieldValue.serverTimestamp()
-        });
-    } catch (error) {
-        console.log('Presence update failed:', error);
-    }
-}
-
-function startPresenceUpdates() {
-    // Clear any existing interval
-    if (presenceUpdateInterval) {
-        clearInterval(presenceUpdateInterval);
-    }
-    
-    // Update immediately
-    updatePlayerPresence();
-    
-    // Then update every 2 seconds (FASTER)
-    presenceUpdateInterval = setInterval(() => {
-        updatePlayerPresence();
-    }, 2000);
-}
-
 function stopPresenceUpdates() {
     if (presenceUpdateInterval) {
         clearInterval(presenceUpdateInterval);
