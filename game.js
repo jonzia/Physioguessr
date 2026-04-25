@@ -128,40 +128,64 @@ class ServerTimer {
     }
 }
 
-// Results screen auto-advance timer (15 seconds fixed)
+// Results screen auto-advance timer (15 seconds, server-synced)
 class ResultsTimer {
-    constructor(onTick, onComplete) {
+    constructor(roomRef, onTick, onComplete) {
+        this.roomRef = roomRef;
         this.onTick = onTick;
         this.onComplete = onComplete;
         this.interval = null;
+        this.unsubscribe = null;
         this.startTime = null;
         this.duration = 15; // Always 15 seconds
     }
     
     start() {
         this.stop();
-        this.startTime = Date.now();
         
-        const updateTimer = () => {
-            const elapsed = (Date.now() - this.startTime) / 1000;
-            const remaining = Math.max(0, Math.ceil(this.duration - elapsed));
-            
-            this.onTick(remaining);
-            
-            if (remaining <= 0) {
+        // Listen to room for results start timestamp
+        this.unsubscribe = this.roomRef.onSnapshot((doc) => {
+            if (!doc.exists) {
                 this.stop();
-                this.onComplete();
+                return;
             }
-        };
-        
-        updateTimer();
-        this.interval = setInterval(updateTimer, 1000);
+            
+            const data = doc.data();
+            const serverStartTime = data.resultsStartTime?.toMillis();
+            
+            if (!serverStartTime) return;
+            
+            // Only start interval once we have server time
+            if (!this.interval && serverStartTime) {
+                this.startTime = serverStartTime;
+                
+                const updateTimer = () => {
+                    const now = Date.now();
+                    const elapsed = (now - this.startTime) / 1000;
+                    const remaining = Math.max(0, Math.ceil(this.duration - elapsed));
+                    
+                    this.onTick(remaining);
+                    
+                    if (remaining <= 0) {
+                        this.stop();
+                        this.onComplete();
+                    }
+                };
+                
+                updateTimer(); // Immediate update
+                this.interval = setInterval(updateTimer, 100); // Update every 100ms
+            }
+        });
     }
     
     stop() {
         if (this.interval) {
             clearInterval(this.interval);
             this.interval = null;
+        }
+        if (this.unsubscribe) {
+            this.unsubscribe();
+            this.unsubscribe = null;
         }
     }
 }
@@ -1080,20 +1104,31 @@ function waitForNextRound() {
         resultsTimerInstance.stop();
     }
     
-    // Start 15-second auto-advance timer
+    // Start 15-second auto-advance timer (server-synced)
     resultsTimerInstance = new ResultsTimer(
+        roomRef,
         (remaining) => {
-            // Update both waiting message timer and continue button
+            // Update desktop waiting message timer
             if (waitingTimer) {
                 waitingTimer.textContent = remaining;
             }
             
+            // Update mobile waiting message timer
+            if (mobileWaitingTimer) {
+                mobileWaitingTimer.textContent = remaining;
+            }
+            
             // Update for players who HAVEN'T clicked continue yet
-            if (!continueBtn.classList.contains('hidden')) {
-                continueBtn.textContent = `Continue (Auto-advancing in ${remaining}s)`;
+            if (continueBtn && !continueBtn.classList.contains('hidden')) {
+                continueBtn.textContent = `Continue (${remaining}s)`;
                 if (remaining <= 5) {
                     continueBtn.style.background = '#f44336'; // Red warning
                 }
+            }
+            
+            // Update mobile continue button
+            if (mobileContinueBtn && !mobileContinueBtn.disabled) {
+                mobileContinueBtn.textContent = `Continue (${remaining}s)`;
             }
         },
         async () => {
@@ -1112,7 +1147,8 @@ function waitForNextRound() {
             } else {
                 await roomRef.update({ 
                     currentRound: currentRound + 1,
-                    roundStartTime: firebase.firestore.FieldValue.serverTimestamp()
+                    roundStartTime: firebase.firestore.FieldValue.serverTimestamp(),
+                    resultsStartTime: null // Clear for next round
                 });
             }
         }
@@ -1153,7 +1189,8 @@ function waitForNextRound() {
             } else {
                 await roomRef.update({ 
                     currentRound: currentRound + 1,
-                    roundStartTime: firebase.firestore.FieldValue.serverTimestamp()
+                    roundStartTime: firebase.firestore.FieldValue.serverTimestamp(),
+                    resultsStartTime: null // Clear for next round
                 });
             }
         }
@@ -1696,6 +1733,12 @@ function waitForAllSubmissions() {
             // Get room data for current round results
             const roomDoc = await roomRef.get();
             const roomData = roomDoc.data();
+            
+            // SET RESULTS START TIME for synchronized 15-second countdown
+            await roomRef.update({
+                resultsStartTime: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            
             // Get question from the set
             const questionId = roomData.questionOrder[currentRound - 1];
             const setId = roomData.questionSetId || 'default';
@@ -1714,8 +1757,7 @@ function waitForAllSubmissions() {
             
             showResultsModal(myRoundData.score, myRoundData.distance, allPlayersData);
             
-            // Start the 15-second auto-advance timer immediately for all players
-            // This is handled in waitForNextRound()
+            // Start the 15-second auto-advance timer
             waitForNextRound();
         }
     });
@@ -1780,40 +1822,32 @@ submitBtn.addEventListener('click', async () => {
 
         console.log('Submission saved to Firebase');
 
-        // Show waiting message with server-synced countdown
+        // Show simple waiting message
         timerDisplay.classList.remove('hidden', 'warning');
+        timerDisplay.innerHTML = `Waiting for other players... <span id="waiting-timer-main">--</span>s`;
 
-        // Create a new timer just for waiting display
-        let waitingTimeRemaining = 0;
-
-        // Get time from server
-        roomRef.get().then((doc) => {
-            if (!doc.exists) return;
-            
-            const data = doc.data();
-            const roundStartTime = data.roundStartTime?.toMillis();
-            const roundDuration = data.timerSeconds || 30;
-            
-            if (!roundStartTime) return;
-            
-            // Calculate initial time
-            const elapsed = (Date.now() - roundStartTime) / 1000;
-            waitingTimeRemaining = Math.max(0, Math.ceil(roundDuration - elapsed));
-            
-            timerDisplay.innerHTML = `Waiting for other players... (<span id="waiting-timer-main">${waitingTimeRemaining}</span>s)`;
-            
-            const waitingIntervalMain = setInterval(() => {
-                waitingTimeRemaining--;
-                if (waitingTimeRemaining < 0) waitingTimeRemaining = 0;
-                
+        // Start waiting timer synced to server
+        const waitingTimerInstance = new ServerTimer(
+            roomRef,
+            (remaining) => {
                 const timerSpan = document.getElementById('waiting-timer-main');
                 if (timerSpan) {
-                    timerSpan.textContent = waitingTimeRemaining;
+                    timerSpan.textContent = remaining;
                 }
-                if (waitingTimeRemaining <= 0) {
-                    clearInterval(waitingIntervalMain);
+            },
+            () => {
+                const timerSpan = document.getElementById('waiting-timer-main');
+                if (timerSpan) {
+                    timerSpan.textContent = '0';
                 }
-            }, 1000);
+            }
+        );
+
+        roomRef.get().then((doc) => {
+            if (doc.exists) {
+                const data = doc.data();
+                waitingTimerInstance.start(data.timerSeconds || 30);
+            }
         });
 
         // Wait for all players or timeout
@@ -3422,42 +3456,40 @@ mobileSubmitBtn.addEventListener('click', async () => {
         },
         score: totalScore
     });
-
+    
     console.log('Mobile submission saved');
-
-    // Show waiting with server-synced countdown
-    let mobileWaitingTimeRemaining = 0;
-
-    roomRef.get().then((doc) => {
-        if (!doc.exists) return;
-        
-        const data = doc.data();
-        const roundStartTime = data.roundStartTime?.toMillis();
-        const roundDuration = data.timerSeconds || 30;
-        
-        if (!roundStartTime) return;
-        
-        // Calculate initial time
-        const elapsed = (Date.now() - roundStartTime) / 1000;
-        mobileWaitingTimeRemaining = Math.max(0, Math.ceil(roundDuration - elapsed));
-        
-        mobileTimerValue.textContent = `Waiting... ${mobileWaitingTimeRemaining}s`;
-        
-        const mobileWaitingInterval = setInterval(() => {
-            mobileWaitingTimeRemaining--;
-            if (mobileWaitingTimeRemaining < 0) mobileWaitingTimeRemaining = 0;
-            
-            mobileTimerValue.textContent = `Waiting... ${mobileWaitingTimeRemaining}s`;
-            
-            if (mobileWaitingTimeRemaining <= 0) {
-                clearInterval(mobileWaitingInterval);
-            }
-        }, 1000);
-    });
-
+    
+    // Show simple waiting message - timer will update from server
+    mobileTimerValue.textContent = 'Waiting...';
+    
+    // Start waiting timer synced to server
+    startMobileWaitingTimer();
+    
     // Wait for all players
     waitForAllSubmissions();
 });
+
+// Mobile waiting timer - synced to server
+function startMobileWaitingTimer() {
+    // Create a ServerTimer instance for waiting
+    const mobileWaitingTimer = new ServerTimer(
+        roomRef,
+        (remaining) => {
+            mobileTimerValue.textContent = `${remaining}s`;
+        },
+        () => {
+            mobileTimerValue.textContent = 'Time\'s up';
+        }
+    );
+    
+    // Start with the round duration (it will sync to server)
+    roomRef.get().then((doc) => {
+        if (doc.exists) {
+            const data = doc.data();
+            mobileWaitingTimer.start(data.timerSeconds || 30);
+        }
+    });
+}
 
 // Mobile exit game
 mobileExitBtn.addEventListener('click', async () => {
@@ -3546,6 +3578,12 @@ function showMobileResults(score, distance, allPlayersData) {
     // Update leaderboard
     updateMobileLeaderboard(allPlayersData);
     
+    // Show waiting message with timer
+    mobileWaitingMsg.classList.remove('hidden');
+    mobileContinueBtn.classList.remove('hidden');
+    mobileContinueBtn.disabled = false;
+    mobileContinueBtn.textContent = 'Continue';
+    
     mobileResultsOverlay.classList.remove('hidden');
     mobileResultsModal.classList.remove('hidden');
 }
@@ -3596,17 +3634,6 @@ mobileContinueBtn.addEventListener('click', async () => {
     mobileContinueBtn.disabled = true;
     mobileContinueBtn.textContent = 'Waiting...';
     mobileWaitingMsg.classList.remove('hidden');
-    
-    // Countdown
-    let countdown = 15;
-    mobileWaitingTimer.textContent = countdown;
-    const countdownInterval = setInterval(() => {
-        countdown--;
-        mobileWaitingTimer.textContent = countdown;
-        if (countdown <= 0) clearInterval(countdownInterval);
-    }, 1000);
-    
-    waitForNextRound();
 });
 
 // Mobile exit from results
