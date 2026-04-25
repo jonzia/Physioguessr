@@ -4200,14 +4200,18 @@ function startHostStaleCheck() {
         
         try {
             // FORCE FRESH READ FROM SERVER (not cache)
-            const snapshot = await playersRef.get({ source: 'server' }); // ✅ ADD THIS
+            const snapshot = await playersRef.get({ source: 'server' });
             
             const estimatedServerNow = Date.now() + globalClockOffset;
             
             console.log('🔍 Stale check - Estimated server time:', new Date(estimatedServerNow));
             
             for (const doc of snapshot.docs) {
-                if (doc.id === playerName) continue;
+                // Skip self - make sure playerName matches doc.id
+                if (doc.id === playerName) {
+                    console.log('⏭️ Skipping self:', doc.id); // ✅ ADD THIS LOG
+                    continue;
+                }
                 
                 const playerData = doc.data();
                 const lastSeen = playerData.lastSeen?.toMillis();
@@ -4303,9 +4307,19 @@ async function updatePlayerPresence() {
         await playersRef.doc(playerName).update({
             lastSeen: firebase.firestore.FieldValue.serverTimestamp()
         });
-        console.log('✓ Presence updated for', playerName); // ✅ ADD LOGGING
+        console.log('✓ Presence updated for', playerName);
     } catch (error) {
-        console.log('❌ Presence update failed:', error);
+        // If document doesn't exist, we've been removed - stop trying
+        if (error.code === 'not-found') {
+            console.log('⚠️ Player document removed, stopping presence updates');
+            stopPresenceUpdates();
+            
+            // Redirect to lobby
+            alert('You have been disconnected from the room.');
+            location.reload();
+        } else {
+            console.log('❌ Presence update failed:', error);
+        }
     }
 }
 
