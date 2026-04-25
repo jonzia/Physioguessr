@@ -3739,6 +3739,7 @@ function startMobileGame(roomData) {
 let playerCensusListener = null;
 let lastKnownPlayerCount = 0;
 let lastKnownPlayers = new Set();
+let presenceUpdateInterval = null;
 
 // Monitor players in room (works for both waiting and playing states)
 function startPlayerCensus() {
@@ -3873,9 +3874,6 @@ async function updatePlayerPresence() {
     }
 }
 
-// Start periodic presence updates (every 10 seconds)
-let presenceUpdateInterval = null;
-
 function startPresenceUpdates() {
     // Clear any existing interval
     if (presenceUpdateInterval) {
@@ -3958,9 +3956,6 @@ async function updatePlayerPresence() {
         console.log('Presence update failed:', error);
     }
 }
-
-// Update periodic presence updates (every 5 seconds instead of 10)
-let presenceUpdateInterval = null;
 
 function startPresenceUpdates() {
     // Clear any existing interval
