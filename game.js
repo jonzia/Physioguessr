@@ -945,6 +945,7 @@ function listenForRoundChanges() {
             hasSubmittedThisRound = false;
             
             if (isMobile) {
+                console.log('🔄 Mobile round change detected - advancing to round', roomData.currentRound);
                 mobileRound.textContent = currentRound;
                 mobileSubmitBtn.disabled = false;
                 mobileSubmitBtn.style.opacity = '1';
@@ -2246,8 +2247,18 @@ function hideResultsModal() {
 // Show game over screen
 async function showGameOver() {
     if (isMobile) {
-        // Mobile game over
-        mobileFinalScore.textContent = totalScore;
+        // Get score from server in presenter mode
+        if (isPresenterMode && currentRoomCode && playersRef) {
+            const myPlayerDoc = await playersRef.doc(playerName).get();
+            if (myPlayerDoc.exists) {
+                mobileFinalScore.textContent = myPlayerDoc.data().score || 0;
+            } else {
+                mobileFinalScore.textContent = totalScore;
+            }
+        } else {
+            // Normal mode - use local variable
+            mobileFinalScore.textContent = totalScore;
+        }
         
         // Get final leaderboard
         if (currentRoomCode && playersRef) {
