@@ -3022,11 +3022,12 @@ async function joinMatchmakingQueue() {
         document.querySelector('.matchmaking-status').textContent = 'Looking for opponents...';
         cancelMatchmakingBtn.style.display = 'block';
         
-        // Add player to queue
+        // Add player to queue - USE UID AS UNIQUE IDENTIFIER
         const queueRef = db.collection('matchmaking');
         const queueDoc = await queueRef.add({
             playerId: currentUser.uid,
-            playerName: playerName,
+            playerName: getPlayerName(),
+            displayName: getPlayerName(),  // Store display name separately
             joinedAt: firebase.firestore.FieldValue.serverTimestamp(),
             status: 'waiting'
         });
@@ -3100,13 +3101,17 @@ function listenForMatchmaking() {
                 myQueueId = null;
             }
 
-            // Join the room
+            // Join the room - USE QUEUE DOC ID AS PLAYER NAME
             currentRoomCode = data.roomCode;
             roomRef = db.collection('rooms').doc(currentRoomCode);
             playersRef = roomRef.collection('players');
+            
+            // Use the queue document ID to find our player document
+            const playerDocId = doc.id;
+            playerName = playerDocId;  // THIS IS KEY - use queue doc ID as player identifier
 
             // Check if we're the creator
-            const playerDoc = await playersRef.doc(playerName).get();
+            const playerDoc = await playersRef.doc(playerDocId).get();
             if (playerDoc.exists) {
                 isRoomCreator = playerDoc.data().isCreator || false;
             }
@@ -3174,32 +3179,36 @@ async function createMatchFromQueue(playerDocs) {
         // Generate room code
         const roomCode = generateRoomCode();
         
-        console.log('Creating match room:', roomCode, 'with players:', playerDocs.map(d => d.data().playerName));
+        console.log('Creating match room:', roomCode, 'with players:', playerDocs.map(d => d.data().displayName));
         
         // Create room
         const newRoomRef = db.collection('rooms').doc(roomCode);
         await newRoomRef.set({
             createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-            createdBy: playerDocs[0].data().playerName,
+            createdBy: playerDocs[0].data().displayName,
             timerSeconds: 30,
             status: 'waiting',
             currentRound: 0,
             questionOrder: [],
             matchmade: true,
-            hostLastSeen: firebase.firestore.FieldValue.serverTimestamp()
+            hostLastSeen: firebase.firestore.FieldValue.serverTimestamp(),
+            questionSetId: 'default'  // ADD THIS - was missing!
         });
         
         const newPlayersRef = newRoomRef.collection('players');
         
-        // Add all players to the room
+        // Add all players to the room - USE UNIQUE QUEUE DOC ID AS PLAYER DOC ID
         for (let i = 0; i < playerDocs.length; i++) {
             const data = playerDocs[i].data();
-            await newPlayersRef.doc(data.playerName).set({
-                name: data.playerName,
+            const uniquePlayerId = playerDocs[i].id;  // Use queue document ID for uniqueness
+            
+            await newPlayersRef.doc(uniquePlayerId).set({
+                name: data.displayName,  // Display name for UI
+                playerId: data.playerId,  // Store actual UID
                 joinedAt: firebase.firestore.FieldValue.serverTimestamp(),
                 isCreator: i === 0,
                 score: 0,
-                lastSeen: firebase.firestore.FieldValue.serverTimestamp()  // ADD THIS LINE
+                lastSeen: firebase.firestore.FieldValue.serverTimestamp()
             });
         }
         
@@ -3218,8 +3227,14 @@ async function createMatchFromQueue(playerDocs) {
         // Auto-start game after 3 seconds
         setTimeout(async () => {
             try {
+                // Load question sets if not loaded
+                if (!questionSetsData) {
+                    await loadQuestionSets();
+                }
+                
                 // Generate question order
-                const questionIds = questionsData.questions.map(q => q.id);
+                const questions = getQuestionsFromSet('default');
+                const questionIds = questions.map(q => q.id);
                 const shuffled = questionIds.sort(() => Math.random() - 0.5).slice(0, 5);
                 
                 await newRoomRef.update({
