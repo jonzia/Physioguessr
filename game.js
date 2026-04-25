@@ -502,8 +502,6 @@ createRoomBtn.addEventListener('click', async () => {
         questionOrder: [],
         hostLastSeen: firebase.firestore.FieldValue.serverTimestamp()
     });
-
-    console.log('Room created with presenterMode:', presenterMode);
     
     // Add creator to players
     playersRef = roomRef.collection('players');
