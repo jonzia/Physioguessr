@@ -1079,10 +1079,33 @@ window.addEventListener('resize', () => {
 });
 
 // Clean up on page unload
-window.addEventListener('beforeunload', (e) => {
+window.addEventListener('beforeunload', async (e) => {
     if (currentRoomCode && playerName && playersRef) {
-        const playerRef = playersRef.doc(playerName);
-        playerRef.delete();
+        // For host leaving waiting room, we need special cleanup
+        if (isRoomCreator && roomRef) {
+            // Host: delete all players and the room
+            try {
+                const roomDoc = await roomRef.get();
+                if (roomDoc.exists && roomDoc.data().status === 'waiting') {
+                    // Delete all players
+                    const playersSnapshot = await playersRef.get();
+                    const deletePromises = playersSnapshot.docs.map(doc => doc.ref.delete());
+                    await Promise.all(deletePromises);
+                    
+                    // Delete room
+                    await roomRef.delete();
+                }
+            } catch (error) {
+                console.log('Host cleanup error:', error);
+            }
+        } else {
+            // Guest: just remove self
+            try {
+                await playersRef.doc(playerName).delete();
+            } catch (error) {
+                console.log('Guest cleanup error:', error);
+            }
+        }
     }
 });
 
