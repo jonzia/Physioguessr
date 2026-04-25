@@ -3002,6 +3002,9 @@ findMatchBtn.addEventListener('click', async () => {
     // Get player name
     playerName = getPlayerName();
     
+    // RESET game started flag
+    hasGameStarted = false;  // ADD THIS LINE
+    
     // Show matchmaking panel
     lobbyMenu.classList.add('hidden');
     matchmakingPanel.classList.remove('hidden');
@@ -3013,6 +3016,9 @@ findMatchBtn.addEventListener('click', async () => {
 // Cancel Matchmaking
 cancelMatchmakingBtn.addEventListener('click', async () => {
     await leaveMatchmakingQueue();
+    
+    // RESET game started flag
+    hasGameStarted = false;  // ADD THIS LINE
     
     // Return to lobby
     matchmakingPanel.classList.add('hidden');
