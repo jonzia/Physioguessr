@@ -192,6 +192,7 @@ class ResultsTimer {
 
 // Centralized leave room function - UPDATED with timer cleanup
 async function leaveRoom() {
+    
     // Stop player census
     stopPlayerCensus();
     
@@ -1071,14 +1072,10 @@ window.addEventListener('resize', () => {
 });
 
 // Clean up on page unload
-window.addEventListener('beforeunload', async (e) => {
+window.addEventListener('beforeunload', (e) => {
     if (currentRoomCode && playerName && playersRef) {
-        try {
-            // Remove player from room
-            await playersRef.doc(playerName).delete();
-        } catch (error) {
-            console.log('Cleanup error:', error);
-        }
+        const playerRef = playersRef.doc(playerName);
+        playerRef.delete();
     }
 });
 
@@ -1822,33 +1819,15 @@ submitBtn.addEventListener('click', async () => {
 
         console.log('Submission saved to Firebase');
 
-        // Show simple waiting message
+        // STOP the round timer completely - no more updates
+        if (roundTimerInstance) {
+            roundTimerInstance.stop();
+            roundTimerInstance = null;
+        }
+
+        // Show static waiting message - NO countdown
         timerDisplay.classList.remove('hidden', 'warning');
-        timerDisplay.innerHTML = `Waiting for other players... <span id="waiting-timer-main">--</span>s`;
-
-        // Start waiting timer synced to server
-        const waitingTimerInstance = new ServerTimer(
-            roomRef,
-            (remaining) => {
-                const timerSpan = document.getElementById('waiting-timer-main');
-                if (timerSpan) {
-                    timerSpan.textContent = remaining;
-                }
-            },
-            () => {
-                const timerSpan = document.getElementById('waiting-timer-main');
-                if (timerSpan) {
-                    timerSpan.textContent = '0';
-                }
-            }
-        );
-
-        roomRef.get().then((doc) => {
-            if (doc.exists) {
-                const data = doc.data();
-                waitingTimerInstance.start(data.timerSeconds || 30);
-            }
-        });
+        timerDisplay.innerHTML = `Waiting for other players...`;
 
         // Wait for all players or timeout
         waitForAllSubmissions();
@@ -1899,19 +1878,11 @@ function updateSlice() {
 }
 
 // Clean up on page unload
-window.addEventListener('beforeunload', async (e) => {
+window.addEventListener('beforeunload', (e) => {
     if (currentRoomCode && playerName && playersRef) {
-        try {
-            // Remove player from room
-            await playersRef.doc(playerName).delete();
-            
-            // If creator left, mark room as abandoned
-            if (isRoomCreator && roomRef) {
-                await roomRef.update({ status: 'abandoned' });
-            }
-        } catch (error) {
-            console.log('Cleanup error:', error);
-        }
+        // Synchronous delete - best effort to complete before page closes
+        const playerRef = playersRef.doc(playerName);
+        playerRef.delete();
     }
 });
 
@@ -3416,7 +3387,7 @@ function updateMobileMarkerOpacity() {
     }
 }
 
-// Mobile submit guess
+// Mobile submit guess - DEFINITIVE VERSION
 mobileSubmitBtn.addEventListener('click', async () => {
     if (!mobileClickPosition) {
         alert('Please tap on the brain image to mark your guess');
@@ -3428,10 +3399,7 @@ mobileSubmitBtn.addEventListener('click', async () => {
         return;
     }
     
-    // Stop timer
-    stopMobileTimer();
-    
-    // Calculate distance and score (same logic as desktop)
+    // Calculate distance and score
     const dx = mobileClickPosition.x - currentQuestion.x;
     const dy = mobileClickPosition.y - currentQuestion.y;
     const dz = (mobileClickPosition.slice - currentQuestion.slice) / totalSlices;
@@ -3459,37 +3427,18 @@ mobileSubmitBtn.addEventListener('click', async () => {
     
     console.log('Mobile submission saved');
     
-    // Show simple waiting message - timer will update from server
-    mobileTimerValue.textContent = 'Waiting...';
+    // STOP the round timer completely - no more updates
+    if (mobileRoundTimerInstance) {
+        mobileRoundTimerInstance.stop();
+        mobileRoundTimerInstance = null;
+    }
     
-    // Start waiting timer synced to server
-    startMobileWaitingTimer();
+    // Show static waiting message - NO countdown
+    mobileTimerValue.textContent = 'Waiting...';
     
     // Wait for all players
     waitForAllSubmissions();
 });
-
-// Mobile waiting timer - synced to server
-function startMobileWaitingTimer() {
-    // Create a ServerTimer instance for waiting
-    const mobileWaitingTimer = new ServerTimer(
-        roomRef,
-        (remaining) => {
-            mobileTimerValue.textContent = `${remaining}s`;
-        },
-        () => {
-            mobileTimerValue.textContent = 'Time\'s up';
-        }
-    );
-    
-    // Start with the round duration (it will sync to server)
-    roomRef.get().then((doc) => {
-        if (doc.exists) {
-            const data = doc.data();
-            mobileWaitingTimer.start(data.timerSeconds || 30);
-        }
-    });
-}
 
 // Mobile exit game
 mobileExitBtn.addEventListener('click', async () => {
@@ -3739,9 +3688,6 @@ function startPlayerCensus() {
         
         // Check if anyone left
         if (currentPlayerCount < lastKnownPlayerCount) {
-            const playersLost = lastKnownPlayerCount - currentPlayerCount;
-            
-            // Find who left
             const playersWhoLeft = [];
             lastKnownPlayers.forEach(playerName => {
                 if (!currentPlayers.has(playerName)) {
@@ -3755,74 +3701,51 @@ function startPlayerCensus() {
             const hostStillPresent = snapshot.docs.some(doc => doc.data().isCreator === true);
             
             if (!hostStillPresent) {
-                // Host left
-                console.log('Host has left the game');
+                // Host left - stop listening and reload
+                console.log('Host has left');
                 
-                // Stop listening immediately to prevent multiple alerts
                 if (playerCensusListener) {
                     playerCensusListener();
                     playerCensusListener = null;
                 }
                 
-                // Get room state
+                alert('Host has left. Returning to lobby.');
+                location.reload();
+                return;
+            } else {
+                // Guest(s) left
                 const roomDoc = await roomRef.get();
-                if (roomDoc.exists) {
-                    const roomData = roomDoc.data();
-                    
-                    if (roomData.status === 'waiting') {
-                        // In lobby - close the room
-                        alert('Host has left. Returning to lobby.');
-                        
-                        // Delete all players
-                        const deletePromises = snapshot.docs.map(doc => doc.ref.delete());
-                        await Promise.all(deletePromises);
-                        
-                        // Delete room
-                        await roomRef.delete();
-                        
-                        // Return to lobby
-                        location.reload();
-                        return;
-                    } else if (roomData.status === 'playing') {
-                        // During game - end game for everyone
-                        alert('Host has disconnected. Game is ending.');
-                        
-                        // Mark game as finished
-                        await roomRef.update({ status: 'finished' });
-                        
-                        // Don't reload yet - let showGameOver handle it
-                        return;
+                
+                if (!roomDoc.exists) {
+                    // Room was deleted
+                    if (playerCensusListener) {
+                        playerCensusListener();
+                        playerCensusListener = null;
                     }
-                } else {
-                    // Room doesn't exist anymore (host closed it)
                     alert('Room has been closed. Returning to lobby.');
                     location.reload();
                     return;
                 }
-            } else {
-                // Guest(s) left during game
-                if (roomRef) {
-                    const roomDoc = await roomRef.get();
-                    if (roomDoc.exists && roomDoc.data().status === 'playing') {
-                        // Show non-invasive notification
-                        showNotification(`${playersWhoLeft.join(', ')} disconnected (${currentPlayerCount} remaining)`);
-                        
-                        // If only host remains, end the game
-                        if (currentPlayerCount === 1) {
-                            // Stop listening to prevent multiple alerts
-                            if (playerCensusListener) {
-                                playerCensusListener();
-                                playerCensusListener = null;
-                            }
-                            
-                            alert('All other players have disconnected. Returning to lobby.');
-                            location.reload();
-                            return;
+                
+                const roomData = roomDoc.data();
+                
+                if (roomData.status === 'playing') {
+                    // During game - show notification
+                    showNotification(`${playersWhoLeft.join(', ')} disconnected (${currentPlayerCount} remaining)`);
+                    
+                    // If only 1 player left (just me), end game
+                    if (currentPlayerCount === 1) {
+                        if (playerCensusListener) {
+                            playerCensusListener();
+                            playerCensusListener = null;
                         }
-                    } else if (roomDoc.exists && roomDoc.data().status === 'waiting') {
-                        // Guest left during waiting - just show notification
-                        showNotification(`${playersWhoLeft.join(', ')} left the room`);
+                        alert('All other players have disconnected. Returning to lobby.');
+                        location.reload();
+                        return;
                     }
+                } else if (roomData.status === 'waiting') {
+                    // In waiting room - just show notification
+                    showNotification(`${playersWhoLeft.join(', ')} left the room`);
                 }
             }
         }
@@ -3830,17 +3753,16 @@ function startPlayerCensus() {
         // Update our tracking
         lastKnownPlayerCount = currentPlayerCount;
         lastKnownPlayers = currentPlayers;
-    }, (error) => {
-        // Error callback - handle when room is deleted
-        console.log('Census listener error (room likely deleted):', error);
         
-        // Stop listening
+    }, (error) => {
+        // Error callback - room was deleted or connection lost
+        console.log('Census error (room likely deleted):', error);
+        
         if (playerCensusListener) {
             playerCensusListener();
             playerCensusListener = null;
         }
         
-        // Show single alert and reload
         alert('Room has been closed. Returning to lobby.');
         location.reload();
     });
@@ -3869,7 +3791,7 @@ async function updatePlayerPresence() {
     }
 }
 
-// Start periodic presence updates (every 10 seconds)
+// Update periodic presence updates (every 5 seconds instead of 10)
 let presenceUpdateInterval = null;
 
 function startPresenceUpdates() {
@@ -3881,10 +3803,10 @@ function startPresenceUpdates() {
     // Update immediately
     updatePlayerPresence();
     
-    // Then update every 10 seconds
+    // Then update every 5 seconds (CHANGED from 10)
     presenceUpdateInterval = setInterval(() => {
         updatePlayerPresence();
-    }, 10000);
+    }, 5000); // CHANGED from 10000
 }
 
 function stopPresenceUpdates() {
