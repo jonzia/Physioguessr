@@ -2210,6 +2210,8 @@ function positionResultMarkers(allPlayersData = null) {
 
 // Hide results modal
 function hideResultsModal() {
+    console.log('hideResultsModal called - isMobile:', isMobile);
+
     if (isMobile) {
         hideMobileResults();
         return;
@@ -4573,6 +4575,8 @@ mobileExitResultsBtn.addEventListener('click', async () => {
 
 // Hide mobile results
 function hideMobileResults() {
+    console.log('hideMobileResults called');
+    
     mobileResultsOverlay.classList.add('hidden');
     mobileResultsModal.classList.add('hidden');
     mobileContinueBtn.disabled = false;
