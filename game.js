@@ -796,14 +796,10 @@ function listenForRoundChanges() {
             console.log('Forced to advance to round', roomData.currentRound);
             lastSeenRound = roomData.currentRound;
             
-            // Clean up countdown
-            if (waitingCountdown) {
-                clearInterval(waitingCountdown);
-                waitingCountdown = null;
-            }
-            if (autoAdvanceCountdown) {
-                clearInterval(autoAdvanceCountdown);
-                autoAdvanceCountdown = null;
+            // Clean up results timer
+            if (resultsTimerInstance) {
+                resultsTimerInstance.stop();
+                resultsTimerInstance = null;
             }
             
             // Clean up any pending listeners/timeouts
@@ -861,10 +857,7 @@ function listenForRoundChanges() {
                     
                     if (freshData.roundStartTime) {
                         clearInterval(waitForTimer);
-                        console.log('Round start time found:', freshData.roundStartTime.toDate()); // DEBUG
                         startRoundTimer(freshData.timerSeconds);
-                    } else {
-                        console.log('Waiting for roundStartTime...'); // DEBUG
                     }
                 }, 100);
                 
