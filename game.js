@@ -245,6 +245,33 @@ class ResultsTimer {
     }
 }
 
+// Calculate clock offset by comparing server timestamp to local time
+async function calculateClockOffset(roomRef) {
+    if (globalClockOffset !== 0) {
+        console.log('Clock offset already calculated:', globalClockOffset);
+        return; // Already calculated
+    }
+    
+    try {
+        // Write a timestamp to get server time
+        await roomRef.update({
+            _clockSync: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        
+        // Read it back immediately
+        const doc = await roomRef.get();
+        const serverTime = doc.data()._clockSync?.toMillis();
+        
+        if (serverTime) {
+            const localTime = Date.now();
+            globalClockOffset = serverTime - localTime;
+            console.log('Clock offset calculated:', globalClockOffset, 'ms');
+        }
+    } catch (error) {
+        console.log('Clock offset calculation failed:', error);
+    }
+}
+
 // Centralized leave room function - UPDATED with timer cleanup
 async function leaveRoom() {
     // Unsubscribe from game start listener
@@ -1146,6 +1173,9 @@ async function startMultiplayerGame(roomData) {
     isPresenterMode = roomData.presenterMode || false;
     const isPresenter = isPresenterMode && isRoomCreator;
     console.log('Presenter mode:', isPresenterMode, 'Is presenter:', isPresenter);
+
+    // Calculate clock offset for stale detection
+    await calculateClockOffset(roomRef);
     
     // STOP HEARTBEAT MONITORING (no longer needed)
     if (window.hostPresenceInterval) {
@@ -4878,7 +4908,6 @@ function startPlayerCensus() {
     });
 }
 
-// Host checks for stale players
 function startHostStaleCheck() {
     if (!isRoomCreator || !playersRef) return;
     
@@ -4892,13 +4921,9 @@ function startHostStaleCheck() {
         }
         
         try {
-            // Get server time reference from room document
-            const roomDoc = await roomRef.get();
-            const serverNow = roomDoc.updateTime?.toMillis(); // Use Firestore's server-side updateTime
-            
-            if (!serverNow) return;
-            
             const snapshot = await playersRef.get({ source: 'server' });
+            
+            const estimatedServerNow = Date.now() + globalClockOffset;
             
             for (const doc of snapshot.docs) {
                 if (doc.id === playerName) {
@@ -4912,8 +4937,7 @@ function startHostStaleCheck() {
                     continue;
                 }
                 
-                // Use server time, not client time
-                const staleTime = serverNow - lastSeen;
+                const staleTime = estimatedServerNow - lastSeen;
                 
                 if (staleTime > staleTimeout) {
                     console.log(`🗑️ Removing stale player: ${doc.id} (${Math.round(staleTime/1000)}s stale)`);
@@ -4959,14 +4983,8 @@ function startGuestHostMonitor() {
                 return;
             }
             
-            // Get server time reference
-            const roomDoc = await roomRef.get();
-            const serverNow = roomDoc.updateTime?.toMillis();
-            
-            if (!serverNow) return;
-            
-            // Use server time
-            const staleTime = serverNow - hostLastSeen;
+            const estimatedServerNow = Date.now() + globalClockOffset;
+            const staleTime = estimatedServerNow - hostLastSeen;
             
             if (staleTime > staleTimeout) {
                 console.log(`🗑️ Host stale for ${Math.round(staleTime/1000)}s`);
