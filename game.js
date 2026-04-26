@@ -565,7 +565,13 @@ joinRoomSubmitBtn.addEventListener('click', async () => {
     }
 
     const roomCode = roomCodeInput.value.trim().toUpperCase();
-    if (!roomCode) return;
+    
+    // ADD BACK validation
+    if (!roomCode || roomCode.length !== 4) {
+        joinError.textContent = 'Please enter a 4-letter room code';
+        joinError.classList.remove('hidden');
+        return;
+    }
 
     console.log('Checking room:', roomCode);
     
@@ -573,7 +579,7 @@ joinRoomSubmitBtn.addEventListener('click', async () => {
     playerName = getPlayerName();
     
     joinError.classList.add('hidden');
-    showLobbyLoading('Joining room...');  // ADD THIS
+    showLobbyLoading('Joining room...');
     
     try {  // WRAP IN TRY-CATCH
         // Check if room exists
@@ -583,7 +589,7 @@ joinRoomSubmitBtn.addEventListener('click', async () => {
         if (!roomDoc.exists) {
             joinError.classList.remove('hidden');
             joinError.textContent = 'Room not found';
-            hideLobbyLoading();  // ADD THIS
+            hideLobbyLoading();
             return;
         }
         
@@ -4143,8 +4149,8 @@ mobileJoinBtn.addEventListener('click', async () => {
     const roomCode = mobileRoomCode.value.trim().toUpperCase();
     const displayName = mobileNameInput.value.trim() || 'Guest';
     
-    if (!roomCode || roomCode.length !== 6) {
-        mobileError.textContent = 'Please enter a valid 6-digit room code';
+    if (!roomCode || roomCode.length !== 4) {
+        mobileError.textContent = 'Please enter a valid 4-digit room code';
         mobileError.classList.remove('hidden');
         return;
     }
