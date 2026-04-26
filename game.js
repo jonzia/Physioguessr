@@ -386,9 +386,14 @@ function getPlayerName() {
     return 'Player-' + Math.random().toString(36).substr(2, 4).toUpperCase();
 }
 
-// Generate random room code
+// Generate random room code - 4 letters, excluding ambiguous characters
 function generateRoomCode() {
-    return Math.random().toString(36).substr(2, 6).toUpperCase();
+    const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ'; // Removed I, L, O
+    let code = '';
+    for (let i = 0; i < 4; i++) {
+        code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return code;
 }
 
 singlePlayerBtn.addEventListener('click', () => {
@@ -4871,9 +4876,8 @@ function startPlayerCensus() {
 function startHostStaleCheck() {
     if (!isRoomCreator || !playersRef) return;
     
-    // MODIFY - Use longer timeout in presenter mode instead of disabling
-    const staleTimeout = isPresenterMode ? 10000 : 5000; // 10s for presenter, 5s for normal
-    const checkInterval_time = isPresenterMode ? 2000 : 1000; // Check every 2s in presenter mode
+    const staleTimeout = isPresenterMode ? 10000 : 5000;
+    const checkInterval_time = isPresenterMode ? 2000 : 1000;
     
     const checkInterval = setInterval(async () => {
         if (!currentRoomCode || !isRoomCreator) {
@@ -4882,10 +4886,13 @@ function startHostStaleCheck() {
         }
         
         try {
-            // FORCE FRESH READ FROM SERVER (not cache)
-            const snapshot = await playersRef.get({ source: 'server' });
+            // Get server time reference from room document
+            const roomDoc = await roomRef.get();
+            const serverNow = roomDoc.updateTime?.toMillis(); // Use Firestore's server-side updateTime
             
-            const estimatedServerNow = Date.now() + globalClockOffset;
+            if (!serverNow) return;
+            
+            const snapshot = await playersRef.get({ source: 'server' });
             
             for (const doc of snapshot.docs) {
                 if (doc.id === playerName) {
@@ -4899,9 +4906,9 @@ function startHostStaleCheck() {
                     continue;
                 }
                 
-                const staleTime = estimatedServerNow - lastSeen;
+                // Use server time, not client time
+                const staleTime = serverNow - lastSeen;
                 
-                // USE VARIABLE TIMEOUT
                 if (staleTime > staleTimeout) {
                     console.log(`🗑️ Removing stale player: ${doc.id} (${Math.round(staleTime/1000)}s stale)`);
                     await doc.ref.delete();
@@ -4918,7 +4925,6 @@ function startHostStaleCheck() {
 function startGuestHostMonitor() {
     if (isRoomCreator || !playersRef) return;
     
-    // MODIFY - Use longer timeout in presenter mode
     const staleTimeout = isPresenterMode ? 10000 : 5000;
     const checkInterval_time = isPresenterMode ? 2000 : 1000;
     
@@ -4947,10 +4953,15 @@ function startGuestHostMonitor() {
                 return;
             }
             
-            const estimatedServerNow = Date.now() + globalClockOffset;
-            const staleTime = estimatedServerNow - hostLastSeen;
+            // Get server time reference
+            const roomDoc = await roomRef.get();
+            const serverNow = roomDoc.updateTime?.toMillis();
             
-            // USE VARIABLE TIMEOUT
+            if (!serverNow) return;
+            
+            // Use server time
+            const staleTime = serverNow - hostLastSeen;
+            
             if (staleTime > staleTimeout) {
                 console.log(`🗑️ Host stale for ${Math.round(staleTime/1000)}s`);
                 clearInterval(monitorInterval);
