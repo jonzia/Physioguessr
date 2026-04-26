@@ -996,8 +996,8 @@ function listenForRoundChanges() {
                 mobileSubmitBtn.style.cursor = 'pointer';
                 
                 mobileClickPosition = null;
-                mobileCurrentSlice = 13;
-                mobileSliceSlider.value = 13;
+                mobileCurrentSlice = 66;
+                mobileSliceSlider.value = 66;
                 updateMobileSlice();
                 mobileMarker.classList.remove('show');
                 
@@ -1971,8 +1971,8 @@ function loadNewQuestion() {
 
     // Reset mobile view if on mobile
     if (isMobile) {
-        mobileCurrentSlice = 13;
-        mobileSliceSlider.value = 13;
+        mobileCurrentSlice = 66;
+        mobileSliceSlider.value = 66;
         updateMobileSlice();
         mobileClickPosition = null;
         mobileMarker.classList.remove('show');
@@ -2086,7 +2086,7 @@ function removeMarker() {
 
 // Reset to initial state
 function resetView() {
-    currentSlice = 13;
+    currentSlice = 66;
     updateSlice();
     removeMarker();
 }
@@ -3266,8 +3266,8 @@ addQuestionBtn.addEventListener('click', () => {
     questionPromptInput.value = '';
     questionDescriptionInput.value = '';
     questionCoordinates = null;
-    currentQuestionSlice = 13;
-    questionSliceSlider.value = 13;
+    currentQuestionSlice = 66;
+    questionSliceSlider.value = 66;
     updateQuestionSlice();
     questionMarker.classList.remove('show');
     questionXDisplay.textContent = '-';
