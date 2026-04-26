@@ -1582,9 +1582,9 @@ function stopPresenterPlayerCountMonitor() {
 }
 
 // Configuration
-const totalSlices = 26;
+const totalSlices = 132;
 const totalRounds = 5;
-let currentSlice = 13;
+let currentSlice = 66;
 let currentRound = 1;
 let clickPosition = null;
 let currentQuestion = null;
@@ -3025,7 +3025,7 @@ let currentEditingSetId = null;
 let currentEditingQuestions = [];
 let currentEditingQuestionIndex = null;
 let questionCoordinates = null;
-let currentQuestionSlice = 13;
+let currentQuestionSlice = 66;
 
 // Open Set Manager
 setManagerBtn.addEventListener('click', () => {
@@ -4169,7 +4169,7 @@ mobileReturnLobbyBtn.addEventListener('click', () => {
 });
 
 // Mobile state
-let mobileCurrentSlice = 13;
+let mobileCurrentSlice = 66;
 let mobileClickPosition = null;
 let mobileTimeRemaining = 30;
 
