@@ -544,6 +544,9 @@ createRoomBtn.addEventListener('click', async () => {
         score: 0,
         lastSeen: firebase.firestore.FieldValue.serverTimestamp()
     });
+
+    // Calculate clock offset immediately
+    await calculateClockOffset(roomRef);
     
     // Listen for players joining
     listenForPlayers();
@@ -670,6 +673,9 @@ joinRoomSubmitBtn.addEventListener('click', async () => {
             score: 0,
             lastSeen: firebase.firestore.FieldValue.serverTimestamp()
         });
+
+        // Calculate clock offset immediately
+        await calculateClockOffset(roomRef);
 
         console.log('Joined successfully, showing waiting panel');
         
@@ -4225,6 +4231,9 @@ mobileJoinBtn.addEventListener('click', async () => {
         isRoomCreator = false;
         
         playersRef = roomRef.collection('players');
+
+        // Calculate clock offset immediately for mobile
+        await calculateClockOffset(roomRef);
         
         // Check if name is taken
         const existingPlayer = await playersRef.doc(playerName).get();
