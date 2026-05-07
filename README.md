@@ -1,4 +1,4 @@
-![logo](https://raw.githubusercontent.com/jonzia/Physioguessr/refs/heads/main/logo.png)
+![logo](./logo.png)
 
 ## Accessing Physioguessr
 Physioguessr is live at [physioguessr.com](https://physioguessr.com) (or [neuroguessr.com](https://neuroguessr.com) if you prefer) and is accessible on desktop and laptop browsers and mobile devices. Physioguessr is free and open source on Github with backend hosted on Firebase servers.
